@@ -1,0 +1,15 @@
+# Test results
+- PS2 Slim SCPH model:
+- MemCard PRO2 firmware/MMCE status:
+- Neutrino commit/release:
+- PSBBN HDD image size and SHA256:
+- MMCE image path:
+- ELF launch path:
+- fileXioInit:
+- Device list:
+- hdd0 status:
+- hdd0 total sectors:
+- hdd0 partition dopen:
+- sector 0 read result:
+- sector 0 first 32 bytes:
+- Screenshot / ps2link log:
