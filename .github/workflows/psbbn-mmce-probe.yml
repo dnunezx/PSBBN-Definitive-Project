@@ -19,23 +19,50 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/ps2dev/ps2dev:latest
-    defaults:
-      run:
-        working-directory: experiments/psbbn-mmce
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Show toolchain configuration
+
+      - name: Install build prerequisites
         run: |
-          echo "PS2DEV=$PS2DEV"
-          echo "PS2SDK=$PS2SDK"
-          command -v ee-gcc || true
-          test -f "$PS2SDK/samples/Makefile.eeglobal"
-      - name: Compile read-only ATA probe
-        run: make
-      - name: Check output
-        run: test -s ata_probe.elf
-      - name: Upload ELF
+          apk add --no-cache make file
+          command -v make
+          make --version
+
+      - name: Compile and capture diagnostic log
+        id: compile
+        shell: bash
+        working-directory: experiments/psbbn-mmce
+        run: |
+          set -o pipefail
+          {
+            echo '=== Toolchain information ==='
+            echo "PS2DEV=${PS2DEV:-UNSET}"
+            echo "PS2SDK=${PS2SDK:-UNSET}"
+            command -v ee-gcc || true
+            ee-gcc --version || true
+            echo '=== Project files ==='
+            ls -la
+            echo '=== Build ==='
+            make V=1
+          } 2>&1 | tee build.log
+
+      - name: Verify ELF
+        working-directory: experiments/psbbn-mmce
+        run: |
+          test -s ata_probe.elf
+          file ata_probe.elf || true
+
+      - name: Upload build log (including on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: psbbn-mmce-build-log
+          path: experiments/psbbn-mmce/build.log
+          if-no-files-found: warn
+
+      - name: Upload compiled ELF
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: psbbn-mmce-ata-probe
