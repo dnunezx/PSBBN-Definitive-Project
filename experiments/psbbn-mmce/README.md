@@ -1,7 +1,19 @@
-# PSBBN MMCE diagnostic v0.2
+# PSBBN MMCE diagnostic v0.3
 
 Experimental PS2 Slim / MemCard PRO2 diagnostic. **No successful PSBBN boot has
 been demonstrated.** This ELF tests storage prerequisites; it does not boot PSBBN.
+
+Replace v0.2 with this version and recopy the supplied fixture before retesting.
+v0.2 used newlib `O_RDONLY` (0) with raw FILEXIO instead of IOP `FIO_O_RDONLY`
+(1). MMCEMAN packs those flags differently; v0.2 is unsuitable for image tests.
+v0.3 fixes the flag and reports a protocol PING for each tested slot. If file
+opening fails, it also attempts to open the slot's root directory:
+
+- PING fails: no valid MMCE reply; inspect device/slot/firmware/driver support.
+- PING succeeds, root opens, fixture fails: investigate the file path or file.
+- PING succeeds, root fails: filesystem access still needs investigation.
+
+These checks narrow the next investigation; they do not prove a cause by themselves.
 
 ## First hardware test (no Neutrino or HDD image required)
 

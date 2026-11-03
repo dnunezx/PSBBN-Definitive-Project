@@ -1,5 +1,21 @@
 # Existing probe and upstream storage review
 
+## First hardware report and v0.3 correction
+
+The user's v0.2 photograph shows all four modules loaded with start result 0,
+`fileXioInit: 0`, and `mmce` registered. Opening the fixture failed with -1 on
+both slots. The user confirms the fixture path and MMCE enablement. This proves
+ELF execution and module registration, not card communication or a file read.
+
+Inspection found v0.2 passed newlib `O_RDONLY` (0) directly to FILEXIO, which
+passes flags unchanged to the IOP. `io_common.h` defines `FIO_O_RDONLY` as 1.
+MMCEMAN computes `(flags & 3) - 1` into an unsigned byte; the incorrect 0 becomes
+0xff, so the encoded command cannot be described as read-only. No successful
+file open, modification, or data read is established by the photograph.
+v0.3 uses the IOP flag, adds documented MMCEMAN devctl PING (command 1), and
+checks the root directory after failed opens. A corrected hardware retest is
+required before attributing the failure to firmware, storage, or a path.
+
 Reviewed 2026-11-03. Starting project commit:
 `ae519cf79f1264a0eaa2f74d9f7b705f66bd1ce3` on `probe`.
 

@@ -1,9 +1,8 @@
-/* v0.2: standalone MMCE file reads, or --inherit for an existing HDD stack.
+/* v0.3: standalone MMCE file reads, or --inherit for an existing HDD stack.
  * No storage write, format, repair or mount requests. No ATA emulator here.
  */
 #include <stdio.h>
 #include <string.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <kernel.h>
 #include <sifrpc.h>
@@ -14,6 +13,7 @@
 /* All file descriptors below are raw fileXio descriptors, never libc fds. */
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
+#include <io_common.h>
 #include <hdd-ioctl.h>
 #include "probe_rpc.h"
 
@@ -86,18 +86,41 @@ static void show_sector(void)
 
 static int read_file(const char *path, int fixture)
 {
-    int fd, count = 0, rv, i;
+    int fd, count = 0, rv, i, root;
+    char device[16];
+    char root_path[20];
+    const char *colon = strchr(path, ':');
     s64 size;
+    if (!colon || colon - path >= (int)sizeof(device) - 1) return 0;
+    memcpy(device, path, colon - path + 1);
+    device[colon - path + 1] = '\0';
+    /* MMCEMAN mmce_cmds.h / mmce_fs_devctl: 1 is the read-only PING.
+     * Response packs protocol, product and revision in the low 24 bits.
+     */
+    rv = fileXioDevctl(device, 1, NULL, 0, NULL, 0);
+    if (rv < 0) scr_printf("%s ping=%d (no valid MMCE reply)\n", device, rv);
+    else scr_printf("%s ping OK: protocol=%u product=%u revision=%u\n",
+                    device, (rv >> 16) & 255, (rv >> 8) & 255, rv & 255);
     scr_printf("Read-only open: %s\n", path);
-    fd = fileXioOpen(path, O_RDONLY, 0);
+    /* Raw FILEXIO requires IOP flags. Newlib O_RDONLY is 0, FIO_O_RDONLY
+     * is 1; passing 0 underflows MMCEMAN's packed access-mode conversion.
+     */
+    fd = fileXioOpen(path, FIO_O_RDONLY, 0);
     if (fd < 0) {
         scr_printf("  open failed: %d\n", fd);
+        snprintf(root_path, sizeof(root_path), "%s/", device);
+        root = fileXioDopen(root_path);
+        scr_printf("  root directory open: %d\n", root);
+        if (root >= 0) {
+            fileXioDclose(root);
+            scr_printf("  Root accessible; check PSBBN/probe.dat path.\n");
+        }
         return 0;
     }
-    size = fileXioLseek64(fd, 0, SEEK_END);
+    size = fileXioLseek64(fd, 0, FIO_SEEK_END);
     scr_printf("Size bytes (hex): %08x%08x\n",
                (unsigned int)((u64)size >> 32), (unsigned int)size);
-    rv = fileXioLseek(fd, 0, SEEK_SET);
+    rv = fileXioLseek(fd, 0, FIO_SEEK_SET);
     memset(sector, 0, sizeof(sector));
     if (size >= 0 && rv == 0) {
         while (count < (int)sizeof(sector)) {
@@ -177,7 +200,7 @@ int main(int argc, char **argv)
     int i, inherit = 0, hdd = 0, rv;
     const char *path = NULL;
     init_scr();
-    scr_printf("PSBBN MMCE DIAGNOSTIC v0.2\n");
+    scr_printf("PSBBN MMCE DIAGNOSTIC v0.3\n");
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--inherit")) inherit = 1;
         else if (!strcmp(argv[i], "--hdd")) { inherit = 1; hdd = 1; }
