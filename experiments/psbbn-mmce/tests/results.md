@@ -1,5 +1,22 @@
 # Hardware results
 
+## Report 3: v0.4 all 11 groups PASS
+
+- User photograph shows `PSBBN AUTOMATIC SUITE v0.4 - FINISHED`.
+- PASS: 512-byte fixture; file random/mixed reads; full 8 MiB file scan;
+  file repeat/seek stability; handle + IOP reboot; FHI capacity; FHI random/full
+  scan; virtual ATA capacity; ATA random/full scan; request bounds checks;
+  MMCE reinitialization after ATA.
+- Verified rates shown: filesystem 1220 KiB/s, FHI 1060 KiB/s, ATA 1060 KiB/s.
+  These rates include verification and RPC overhead.
+- Displayed USB report: mass0:/PSBBN-DIAG-v04.log. Full log not inspected yet.
+- Source of supplied suite: be689195b37de41bf3ab925f0e82522ae10658ea.
+- Confirmed: exact synthetic-image reads through MMCE, FHI and Neutrino ATAD;
+  open-handle continuity across the tested IOP reboot; post-ATA MMCE recovery.
+- Not established: APA/PFS mounting, real PSBBN image access, writes, offsets
+  above 4 GiB, concurrent I/O, PSBBN boot. Exact model/firmware remain unspecified.
+- User reports no existing PSBBN HDD image and requests obtaining one next.
+
 ## Report 2: v0.3 fixture PASS
 
 - User photograph shows `PSBBN MMCE DIAGNOSTIC v0.3`.
@@ -27,8 +44,8 @@
 
 ## Next report
 
-For v0.4, provide the final suite summary or `PSBBN-DIAG-v04.log` from USB.
-The suite, virtual ATA and post-ATA recovery tests are not hardware confirmed yet.
+The v0.4 summary is recorded above. Future reports should include the final
+summary or USB log, image identity, and console/card model and firmware details.
 
 No hardware success or PSBBN boot is claimed by a successful build.
 

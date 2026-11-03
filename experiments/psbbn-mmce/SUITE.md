@@ -1,8 +1,8 @@
 # Automatic diagnostic suite v0.4
 
 The v0.3 fixture test passed on the user's hardware. This suite bundles the next
-storage tests into **one ELF and one automatic run**. The suite itself has not
-yet been tested on a PS2; its results are the next hardware experiment.
+storage tests into **one ELF and one automatic run**. The user's v0.4 photograph
+now confirms all 11 groups PASS; see `tests/results.md` for the observed scope.
 
 ## Copy once, run once
 

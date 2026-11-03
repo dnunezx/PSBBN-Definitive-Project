@@ -1,5 +1,22 @@
 # Existing probe and upstream storage review
 
+## v0.4 virtual ATA hardware milestone
+
+The user's final v0.4 screen shows all 11 groups PASS. Verified rates are
+1220 KiB/s through FILEXIO and 1060 KiB/s through each of FHI and ATAD, including
+the diagnostic's validation and RPC overhead. This confirms the tested
+MMCE -> FHI -> Neutrino ATAD read route and IOP handle transition on hardware.
+It does not establish real PSBBN boot compatibility, large offsets or writes.
+
+The current project's installer creates both PFS and EXT2 `__linux.*`
+partitions (`scripts/PSBBN-Installer.sh`, partition creation), copies Linux
+kernels into `__system/p2lboot`, and creates a `$PSBBN` boot entry with
+`-dev9=NICHDD`. These are source observations, not proof that Neutrino ATAD
+interception covers the later Linux/PSBBN runtime. That boot/storage path still
+requires investigation. The user has no existing disk image and has requested
+obtaining one; local Sony files belong only in ignored `private/`, never the
+repository or Actions artifacts.
+
 ## v0.3 hardware milestone
 
 The second user photograph shows an MMCE PING response on mmce0 (protocol 1,
@@ -85,9 +102,9 @@ directly; it does not require a full rebuild of Neutrino's loader.
 ## Open hardware and boot questions
 
 1. Fixture PASS is confirmed in report 2; exact model/firmware details are pending.
-2. Does installed Neutrino load matching MMCEFHI/FHI and ATAD modules, preserve
-   open handles across IOP transitions, and accept this helper?
-3. Does direct ATAD return the exact image sector bytes and capacity?
+2. The self-contained suite confirms driver loading and its IOP transition;
+   the full Neutrino loader and PSBBN's own transitions remain untested.
+3. ATAD capacity and exact synthetic-image bytes are confirmed in report 3.
 4. Which HDD/APA/PFS, identity and security operations does the user's PSBBN
    version require, including its entry point, boot arguments and IOP resets?
 5. Which module substitutions survive PSBBN's own module loading?
@@ -95,4 +112,4 @@ directly; it does not require a full rebuild of Neutrino's loader.
 
 No APA/PFS driver is automatically loaded here. PSBBN entry points and Sony
 module requirements have not been established, and no Sony files are included.
-Hardware testing remains pending until results are recorded.
+The remaining boot-layer tests require separate results beyond report 3.

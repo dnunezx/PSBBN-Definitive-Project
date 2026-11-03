@@ -1,4 +1,5 @@
 .upstream/
+private/
 build/
 dist/
 *.elf
