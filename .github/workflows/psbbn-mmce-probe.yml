@@ -16,42 +16,23 @@ permissions:
 
 jobs:
   build-probe:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/ps2dev/ps2dev:latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build prerequisites
-        run: |
-          apk add --no-cache make file
-          command -v make
-          make --version
+      # Keep JavaScript actions on Ubuntu; only the compiler runs in Alpine.
+      - name: Prepare pinned PS2SDK build environment
+        run: docker build -t psbbn-probe-build experiments/psbbn-mmce
 
       - name: Compile and capture diagnostic log
-        id: compile
         shell: bash
         working-directory: experiments/psbbn-mmce
         run: |
-          set -o pipefail
-          {
-            echo '=== Toolchain information ==='
-            echo "PS2DEV=${PS2DEV:-UNSET}"
-            echo "PS2SDK=${PS2SDK:-UNSET}"
-            command -v ee-gcc || true
-            ee-gcc --version || true
-            echo '=== Project files ==='
-            ls -la
-            echo '=== Build ==='
-            make V=1
-          } 2>&1 | tee build.log
-
-      - name: Verify ELF
-        working-directory: experiments/psbbn-mmce
-        run: |
-          test -s ata_probe.elf
-          file ata_probe.elf || true
+          set -euo pipefail
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD:/work" psbbn-probe-build bash build.sh 2>&1 | tee build.log
 
       - name: Upload build log (including on failure)
         if: always()
@@ -66,5 +47,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: psbbn-mmce-ata-probe
-          path: experiments/psbbn-mmce/ata_probe.elf
+          path: experiments/psbbn-mmce/dist/
           if-no-files-found: error

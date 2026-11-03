@@ -1,0 +1,6 @@
+.upstream/
+build/
+dist/
+*.elf
+*.o
+SHA256SUMS
