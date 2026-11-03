@@ -1,5 +1,9 @@
 # PSBBN MMCE diagnostic suite v0.4
 
+The user has selected an 8 GB exFAT test card. A private 7 GiB PSBBN 4.3.0
+English working image has been rebuilt and host-checked; see
+[SMALL-IMAGE.md](SMALL-IMAGE.md). Its PS2 boot compatibility remains unverified.
+
 **For the new combined automatic tests, read [SUITE.md](SUITE.md) and launch
 `psbbn_suite.elf`.** Copy the complete supplied `PSBBN` folder once. The suite
 includes the MMCE filesystem, reboot, FHI, virtual ATA and USB report tests.

@@ -1,5 +1,12 @@
 # Hardware results
 
+## Local image preparation: 8 GB exFAT card target
+
+- User confirms the intended card is 8 GB and formatted exFAT.
+- New private image: PSBBN 4.3.0 + English 2.0.1, 7 GiB / 7,516,192,768 bytes.
+- Host filesystem checks and data readbacks passed; see SMALL-IMAGE.md.
+- This is not a PS2 hardware result. Real-image MMCE access and boot are pending.
+
 ## Report 3: v0.4 all 11 groups PASS
 
 - User photograph shows `PSBBN AUTOMATIC SUITE v0.4 - FINISHED`.
