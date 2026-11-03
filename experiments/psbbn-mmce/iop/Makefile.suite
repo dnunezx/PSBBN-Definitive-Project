@@ -1,0 +1,15 @@
+IOP_BIN = ../build/suite_rpc.irx
+IOP_OBJS = suite.o suite_imports.o
+IOP_OBJS_DIR = ../build/suite_rpc/
+IOP_CFLAGS = -I../include -I../vendor/common -Wextra -Werror
+.DEFAULT_GOAL := all
+all: $(IOP_BIN)
+include $(PS2SDK)/Defs.make
+include $(PS2SDK)/samples/Makefile.iopglobal
+$(IOP_OBJS_DIR)suite.o: ../include/suite_rpc.h ../include/suite_logic.h
+$(IOP_OBJS_DIR)suite_imports.c: suite_imports.lst suite_imports.h
+	mkdir -p $(IOP_OBJS_DIR)
+	printf '%s\n' '#include "suite_imports.h"' > $@
+	cat $< >> $@
+$(IOP_OBJS_DIR)suite_imports.o: $(IOP_OBJS_DIR)suite_imports.c
+	$(IOP_C_COMPILE) $(IOP_IETABLE_CFLAGS) -c $< -o $@

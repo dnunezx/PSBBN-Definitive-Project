@@ -1,0 +1,31 @@
+#ifndef FHI
+// Exports needed by OPL
+DECLARE_EXPORT_TABLE(mmcedrv, 1, 1)
+    DECLARE_EXPORT(_retonly)
+    DECLARE_EXPORT(_retonly)
+    DECLARE_EXPORT(_ret0)
+    DECLARE_EXPORT(_retonly)
+    DECLARE_EXPORT(mmcedrv_get_size)
+    DECLARE_EXPORT(mmcedrv_read_sector)
+    DECLARE_EXPORT(mmcedrv_config_set)
+    DECLARE_EXPORT(mmcedrv_read)
+    DECLARE_EXPORT(mmcedrv_write)
+    DECLARE_EXPORT(mmcedrv_lseek)
+END_EXPORT_TABLE
+#else
+// Exports needed by neutrino
+DECLARE_EXPORT_TABLE(fhi, 1, 1)
+    DECLARE_EXPORT(_retonly)
+    DECLARE_EXPORT(_retonly)
+    DECLARE_EXPORT(_ret0)
+    DECLARE_EXPORT(_retonly)
+    DECLARE_EXPORT(fhi_size)
+    DECLARE_EXPORT(fhi_read)
+    DECLARE_EXPORT(fhi_write)
+END_EXPORT_TABLE
+#endif
+
+/* Keep the export table at .text offset 0 for current PS2SDK iopfixup. */
+void _retonly(void) {}
+int _ret0(void) { return 0; }
+int _dummy(void) { return 1; }

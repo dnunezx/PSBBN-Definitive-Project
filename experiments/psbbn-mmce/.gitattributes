@@ -4,4 +4,6 @@ Dockerfile text eol=lf
 *.c text eol=lf
 *.h text eol=lf
 *.lst text eol=lf
+*.tab text eol=lf
+Makefile.* text eol=lf
 *.dat binary

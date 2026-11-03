@@ -1,4 +1,18 @@
-# Hardware results (pending)
+# Hardware results
+
+## Report 2: v0.3 fixture PASS
+
+- User photograph shows `PSBBN MMCE DIAGNOSTIC v0.3`.
+- IOMANX: id 25, start 0; FILEXIO: id 26, start 0.
+- SIO2MAN: id 27, start 0; MMCEMAN: id 28, start 0.
+- fileXioInit: 0. Devices: tty, rom, cdrom, mmce.
+- mmce0 PING: protocol 1, product 1, revision 1 (raw identifiers).
+- Open: mmce0:/PSBBN/probe.dat. Reported size: 0x200 (512 bytes).
+- Read: 512/512 bytes. CRC32: 1c613576.
+- First 32 bytes: 00 through 1f. Full fixture comparison: PASS.
+- Console model, memory-card identity/firmware, ELF hash: awaiting details.
+- Confirmed: standalone MMCE file access and exact fixture bytes on this setup.
+- Not established: virtual ATA, large-image access, APA/PFS, PSBBN boot.
 
 ## Report 1: v0.2 photograph
 
@@ -12,6 +26,9 @@
   during investigation; repeat with v0.3 before drawing a transport conclusion.
 
 ## Next report
+
+For v0.4, provide the final suite summary or `PSBBN-DIAG-v04.log` from USB.
+The suite, virtual ATA and post-ATA recovery tests are not hardware confirmed yet.
 
 No hardware success or PSBBN boot is claimed by a successful build.
 

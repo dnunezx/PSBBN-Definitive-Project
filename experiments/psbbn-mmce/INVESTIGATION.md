@@ -1,5 +1,13 @@
 # Existing probe and upstream storage review
 
+## v0.3 hardware milestone
+
+The second user photograph shows an MMCE PING response on mmce0 (protocol 1,
+product 1, revision 1), a 512-byte file size, 512/512 bytes read, CRC32 1c613576,
+and `Fixture comparison: PASS`. Basic standalone MMCE file access is confirmed
+for that setup. Device identity and firmware are not inferred from the product
+code. Direct virtual ATA and PSBBN boot still need separate tests.
+
 ## First hardware report and v0.3 correction
 
 The user's v0.2 photograph shows all four modules loaded with start result 0,
@@ -69,9 +77,14 @@ The standalone ELF embeds SDK SIO2MAN. The pinned container supplies MMCEMAN,
 but **not** `mmcefhi.irx`: it builds this diagnostic, but is not yet a complete
 matched Neutrino build environment. Resolve that dependency before a rebuild.
 
+For v0.4 the MMCEFHI dependency is now built from the pinned FHI branch under
+`vendor/`, alongside Neutrino's existing ATAD module. See `VENDOR.md` for the
+source revisions and required build/lifecycle fixes. The suite tests this path
+directly; it does not require a full rebuild of Neutrino's loader.
+
 ## Open hardware and boot questions
 
-1. Does the fixture pass on the user's exact Slim and firmware?
+1. Fixture PASS is confirmed in report 2; exact model/firmware details are pending.
 2. Does installed Neutrino load matching MMCEFHI/FHI and ATAD modules, preserve
    open handles across IOP transitions, and accept this helper?
 3. Does direct ATAD return the exact image sector bytes and capacity?

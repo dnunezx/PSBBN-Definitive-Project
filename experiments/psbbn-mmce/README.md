@@ -1,4 +1,12 @@
-# PSBBN MMCE diagnostic v0.3
+# PSBBN MMCE diagnostic suite v0.4
+
+**For the new combined automatic tests, read [SUITE.md](SUITE.md) and launch
+`psbbn_suite.elf`.** Copy the complete supplied `PSBBN` folder once. The suite
+includes the MMCE filesystem, reboot, FHI, virtual ATA and USB report tests.
+The current download contains only the combined suite ELF. The instructions
+below describe the older single-test `ata_probe.elf`, still buildable from source.
+
+## Legacy v0.3 single-test ELF
 
 Experimental PS2 Slim / MemCard PRO2 diagnostic. **No successful PSBBN boot has
 been demonstrated.** This ELF tests storage prerequisites; it does not boot PSBBN.
@@ -77,7 +85,7 @@ write independently. Use a disposable copy of any image.
 ## Build and download
 
 Run `.github/workflows/psbbn-mmce-probe.yml` on `probe`, then download artifact
-**psbbn-mmce-ata-probe** from the successful run. It contains the ELF, fixture,
+**psbbn-mmce-diagnostic-suite** from the successful run. It contains the suite ELF, fixtures,
 instructions, licenses, and SHA256 checksums. Build logs are a separate artifact.
 
 The workflow runs checkout/upload actions on Ubuntu 24.04 and compilation inside

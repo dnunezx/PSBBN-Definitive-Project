@@ -1,4 +1,4 @@
-name: PSBBN MMCE ATA Probe
+name: PSBBN MMCE Diagnostics
 
 on:
   push:
@@ -22,6 +22,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check corruption detection and request bounds
+        working-directory: experiments/psbbn-mmce
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude tests/test_suite_logic.c -o "$RUNNER_TEMP/suite-logic-tests"
+          "$RUNNER_TEMP/suite-logic-tests"
+
       # Keep JavaScript actions on Ubuntu; only the compiler runs in Alpine.
       - name: Prepare pinned PS2SDK build environment
         run: docker build -t psbbn-probe-build experiments/psbbn-mmce
@@ -33,6 +39,10 @@ jobs:
           set -euo pipefail
           docker run --rm --user "$(id -u):$(id -g)" \
             -v "$PWD:/work" psbbn-probe-build bash build.sh 2>&1 | tee build.log
+
+      - name: Validate generated disk against suite byte checker
+        working-directory: experiments/psbbn-mmce
+        run: '"$RUNNER_TEMP/suite-logic-tests" dist/PSBBN/diagnostic.img'
 
       - name: Upload build log (including on failure)
         if: always()
@@ -46,6 +56,6 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: psbbn-mmce-ata-probe
+          name: psbbn-mmce-diagnostic-suite
           path: experiments/psbbn-mmce/dist/
           if-no-files-found: error

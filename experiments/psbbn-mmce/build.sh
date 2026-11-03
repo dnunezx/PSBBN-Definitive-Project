@@ -10,12 +10,17 @@ make
 test -s ata_probe.elf
 file ata_probe.elf
 mips64r5900el-ps2-elf-readelf -h ata_probe.elf
+file psbbn_suite.elf
+mips64r5900el-ps2-elf-readelf -h psbbn_suite.elf
 mkdir -p dist/PSBBN
-cp ata_probe.elf dist/
+rm -f dist/ata_probe.elf
+cp psbbn_suite.elf dist/
 cp tests/probe.dat dist/PSBBN/
-cp README.md INVESTIGATION.md THIRD-PARTY-NOTICES.md dist/
+python3 tests/make_test_disk.py dist/PSBBN/diagnostic.img
+cp README.md SUITE.md VENDOR.md INVESTIGATION.md THIRD-PARTY-NOTICES.md dist/
 mkdir -p dist/tests
 cp tests/results.md dist/tests/
 cp -R licenses dist/
-sha256sum "$PS2SDK"/iop/irx/{iomanX,fileXio,sio2man,mmceman}.irx > dist/SDK-MODULE-SHA256SUMS
-(cd dist && sha256sum ata_probe.elf PSBBN/probe.dat > SHA256SUMS)
+sha256sum "$PS2SDK"/iop/irx/{iomanX,fileXio,sio2man,mmceman,bdm,bdmfs_fatfs,usbd,usbmass_bd}.irx > dist/SDK-MODULE-SHA256SUMS
+sha256sum build/{mmcefhi,atad_emu,suite_rpc}.irx > dist/SUITE-MODULE-SHA256SUMS
+(cd dist && sha256sum psbbn_suite.elf PSBBN/probe.dat PSBBN/diagnostic.img > SHA256SUMS)
