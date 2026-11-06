@@ -29,6 +29,7 @@ static void *handle(int function, void *data, int size)
         reply.security = info->security_status;
     }
     if (function == 3) { reply.result = 0; return &reply; }
+    if (function == 4) { reply.result = fhi_close(FHI_FID_ATA0); return &reply; }
     if (size < (int)sizeof(*req)) return &reply;
     reply.lba = req->lba;
     reply.count = req->count;

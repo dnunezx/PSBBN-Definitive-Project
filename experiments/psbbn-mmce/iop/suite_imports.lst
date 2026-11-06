@@ -5,6 +5,7 @@ atad_IMPORTS_end
 fhi_IMPORTS_start
 I_fhi_size
 I_fhi_read
+I_fhi_close
 fhi_IMPORTS_end
 sysclib_IMPORTS_start
 I_memset

@@ -1,0 +1,10 @@
+IOP_BIN = ../../build/intrelay.irx
+IOP_OBJS = intrelay.o imports.o usb.o
+IOP_SRC_DIR = src/
+IOP_INC_DIR = src/
+IOP_OBJS_DIR = ../../build/intrelay/
+IOP_CFLAGS = -DRPC_IRQ_SUPPORT -I../tge/include -Wall -fno-builtin-printf -fno-builtin-memcpy
+.DEFAULT_GOAL := all
+all: $(IOP_BIN)
+include $(PS2SDK)/Defs.make
+include $(PS2SDK)/samples/Makefile.iopglobal

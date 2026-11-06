@@ -84,6 +84,21 @@ int ata_device_sector_io(int device, void *buf, u32 lba, u32 nsectors, int dir)
 {
     M_DEBUG("%s(%d, 0x%x, %d, %d, %d)\n", __FUNCTION__, device, buf, lba, nsectors, dir);
 
+#if defined(PSBBN_READ_ONLY) || defined(PSBBN_CHECKED_IO)
+    /* Preflight variant: never submit a write; propagate transport failures. */
+    u32 capacity = fhi_size(FHI_FID_ATA0);
+    if (device != 0 || !buf || !nsectors || lba >= capacity || nsectors > capacity - lba)
+        return -22;
+    if (dir == ATA_DIR_WRITE) {
+#ifdef PSBBN_READ_ONLY
+        return -30;
+#else
+        return fhi_write(FHI_FID_ATA0, buf, lba, nsectors) == 1 ? 0 : -5;
+#endif
+    }
+    if (dir != ATA_DIR_READ) return -22;
+    return fhi_read(FHI_FID_ATA0, buf, lba, nsectors) == 1 ? 0 : -5;
+#else
     if (dir == ATA_DIR_WRITE) {
         fhi_write(FHI_FID_ATA0, buf, lba, nsectors);
         return 0;
@@ -93,6 +108,7 @@ int ata_device_sector_io(int device, void *buf, u32 lba, u32 nsectors, int dir)
     }
 
     return -1;
+#endif
 }
 
 /* Export 10 */

@@ -1,5 +1,7 @@
+#ifndef PSBBN_FHI_HOST_TEST
 #include <thsemap.h>
 #include <thbase.h>
+#endif
 
 #include "module_debug.h"
 #include "mmcedrv_config.h"
@@ -28,6 +30,18 @@ extern s64 mmcedrv_lseek64(int fd, s64 offset, int whence);
 extern int mmcedrv_read_sector(int fd, u32 sector, u32 count, void *buffer);
 extern int mmcedrv_read(int fd, int size, void *ptr);
 extern int mmcedrv_write(int fd, int size, const void *ptr);
+extern int mmcedrv_close_handle(int fd);
+
+int fhi_close(int file_handle)
+{
+    int result;
+    if (file_handle != FHI_FID_ATA0) return -22;
+    WaitSema(mmce_io_sema);
+    result = mmcedrv_close_handle(fhi.file[file_handle].id);
+    if (!result) { fhi.file[file_handle].id = -1; fhi.file[file_handle].size = 0; }
+    SignalSema(mmce_io_sema);
+    return result;
+}
 
 
 //---------------------------------------------------------------------------
@@ -72,8 +86,8 @@ int fhi_read(int file_handle, void *buffer, unsigned int sector_start, unsigned 
 
     //Other files (VMC/ATA/...), use lseek + read
     } else {
-        mmcedrv_lseek64(fhi.file[file_handle].id, (s64)sector_start * 512, 0);
-        res = mmcedrv_read(fhi.file[file_handle].id, sector_count * 512, buffer);
+        if (mmcedrv_lseek64(fhi.file[file_handle].id, (s64)sector_start * 512, 0) == (s64)sector_start * 512)
+            res = mmcedrv_read(fhi.file[file_handle].id, sector_count * 512, buffer);
 
         if (res == sector_count * 512)
             res = 1;
@@ -106,8 +120,9 @@ int fhi_write(int file_handle, const void *buffer, unsigned int sector_start, un
     DPRINTF("%s(%i, %u, 0x%p, %u)\n", __func__, file_handle, (unsigned int)sector_start, buffer, sector_count);
 
     WaitSema(mmce_io_sema);
-    mmcedrv_lseek64(fhi.file[file_handle].id, (s64)sector_start * 512, 0);
-    res = mmcedrv_write(fhi.file[file_handle].id, sector_count * 512, buffer);
+    res = -1;
+    if (mmcedrv_lseek64(fhi.file[file_handle].id, (s64)sector_start * 512, 0) == (s64)sector_start * 512)
+        res = mmcedrv_write(fhi.file[file_handle].id, sector_count * 512, buffer);
     SignalSema(mmce_io_sema);
 
     if (res != sector_count * 512)

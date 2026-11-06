@@ -1,0 +1,13 @@
+IOP_BIN = ../../build/pfs_ro.irx
+IOP_OBJS = pfs.o pfs_fio.o pfs_fioctl.o imports.o bitmap.o dir.o inode.o journal.o misc.o super.o superWrite.o cache.o block.o blockWrite.o
+IOP_SRC_DIR = src/
+IOP_INC_DIR = src/
+IOP_OBJS_DIR = ../../build/pfs_ro/
+IOP_CFLAGS = -DPSBBN_READ_ONLY -DIOMANX_OLD_NAME_COMPATIBILITY=0 -DIOMANX_OLD_NAME_ADDDELDRV=0 -I../libpfs/include
+IOP_LIBS = -lgcc
+.DEFAULT_GOAL := all
+all: $(IOP_BIN)
+include $(PS2SDK)/Defs.make
+include $(PS2SDK)/samples/Makefile.iopglobal
+$(IOP_OBJS_DIR)%.o: ../libpfs/src/%.c
+	$(IOP_CC) $(IOP_CFLAGS) $(IOP_INCS) -c $< -o $@

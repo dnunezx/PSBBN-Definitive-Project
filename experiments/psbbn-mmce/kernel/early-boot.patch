@@ -1,0 +1,276 @@
+--- a/arch/mips/ps2/Makefile
++++ b/arch/mips/ps2/Makefile
+@@ -23,5 +23,7 @@
+ obj-$(CONFIG_PS2_SERIAL_CONSOLE)	+= romcons.o
+ obj-$(CONFIG_PS2_DEBUGLOG)		+= debuglog.o
+ 
++obj-$(CONFIG_PSBBN_MMCE) += boot_trace.o boot_trace_font.o
++
+ include $(TOPDIR)/Rules.make
+ 
+--- a/arch/mips/kernel/head.S
++++ b/arch/mips/kernel/head.S
+@@ -201,6 +201,19 @@
+ 	 sw	zero, (t0)
+ #endif
+ 
++	/* Preserve boot arguments across the screen-only entry marker. */
++	addiu	sp, sp, -32
++	sw	a0, 16(sp)
++	sw	a1, 20(sp)
++	sw	a2, 24(sp)
++	sw	a3, 28(sp)
++	jal	psbbn_trace_entry
++	 nop
++	lw	a0, 16(sp)
++	lw	a1, 20(sp)
++	lw	a2, 24(sp)
++	lw	a3, 28(sp)
++	addiu	sp, sp, 32
+ 	jal	init_arch
+ 	 nop
+ 	END(kernel_entry)
+--- a/arch/mips/kernel/setup.c
++++ b/arch/mips/kernel/setup.c
+@@ -13,6 +13,13 @@
+ #include <linux/errno.h>
+ #include <linux/hdreg.h>
+ #include <linux/init.h>
++#ifdef CONFIG_PSBBN_MMCE
++#define PSBBN_TRACE_FONT psbbn_trace_font
++#include <asm/ps2/boot_trace.h>
++extern void psbbn_early_console_init(void);
++extern void psbbn_early_console_stop(void);
++#endif
++
+ #include <linux/ioport.h>
+ #include <linux/sched.h>
+ #include <linux/kernel.h>
+@@ -616,7 +623,13 @@
+ 	unsigned int s;
+ 
+ 	/* Determine which MIPS variant we are running on. */
++#ifdef CONFIG_PSBBN_MMCE
++	psbbn_trace("K1 LINUX CPU PROBE");
++#endif
+ 	cpu_probe();
++#ifdef CONFIG_PSBBN_MMCE
++	psbbn_trace("K2 LINUX CPU PROBE FINISHED");
++#endif
+ 
+ 	prom_init(argc, argv, envp, prom_vec);
+ 
+@@ -642,6 +655,10 @@
+ 	s |= ST0_CU0;
+ 	write_32bit_cp0_register(CP0_STATUS, s);
+ 
++#ifdef CONFIG_PSBBN_MMCE
++	psbbn_early_console_init();
++	psbbn_trace("K5 LINUX START_KERNEL");
++#endif
+ 	start_kernel();
+ }
+ 
+--- a/arch/mips/ps2/prom.c
++++ b/arch/mips/ps2/prom.c
+@@ -19,6 +19,13 @@
+ #include <asm/ps2/sbcall.h>
+ #include <asm/ps2/bootinfo.h>
+ #include "ps2.h"
++#ifdef CONFIG_PSBBN_MMCE
++#define PSBBN_TRACE_FONT psbbn_trace_font
++#include <asm/ps2/boot_trace.h>
++extern void psbbn_early_console_init(void);
++extern void psbbn_early_console_stop(void);
++#endif
++
+ 
+ #define SBIOS_BASE	0x80001000
+ #define SBIOS_ENTRY	0
+@@ -46,6 +53,7 @@
+ 	int oldbootinfo = 0;
+ 	unsigned long sbios_signature;
+ 
++	psbbn_trace("K3 LINUX PROM PARAMETERS");
+ 	/* default bootinfo */
+ 	memset(&ps2_bootinfox, 0, sizeof(struct ps2_bootinfo));
+ 	ps2_bootinfox.sbios_base = SBIOS_BASE;
+@@ -99,6 +107,7 @@
+ 	}
+ 	sbios = *(int (**)(int,void*))(ps2_bootinfo->sbios_base + SBIOS_ENTRY);
+ 	add_memory_region(0, ps2_bootinfo->maxmem & PAGE_MASK, BOOT_MEM_RAM);
++	psbbn_trace("K4 LINUX BIOS VALIDATED");
+ 
+ 	printk("PlayStation 2 SIF BIOS: %04x\n", sbios(SB_GETVER, 0));
+ 
+--- a/drivers/video/ps2con.c
++++ b/drivers/video/ps2con.c
+@@ -44,6 +44,7 @@
+  */
+ 
+ #undef PS2CONDEBUG
++extern void psbbn_early_console_stop(void);
+ 
+ #include <linux/config.h>
+ #include <linux/module.h>
+@@ -206,6 +207,9 @@
+ 	return display_desc;
+     done = 1;
+ 
++#ifdef CONFIG_PSBBN_MMCE
++    psbbn_early_console_stop();
++#endif
+     ps2con_initinfo(&defaultinfo);
+     ps2gs_screeninfo(&defaultinfo, NULL);
+     ps2con_gsp_init();
+@@ -1721,7 +1725,7 @@
+ static int graphics_setup(char *options)
+ {
+     graphics_boot = 1;
+-    return 0;
++    return 1;
+ }
+ 
+ __setup("graphics", graphics_setup);
+--- a/drivers/ps2/ps2dev.c
++++ b/drivers/ps2/ps2dev.c
+@@ -12,6 +12,9 @@
+  */
+ 
+ #include <linux/config.h>
++#ifdef CONFIG_PSBBN_MMCE
++extern void psbbn_early_console_graphics_handoff(void);
++#endif
+ #include <linux/module.h>
+ #include <linux/mm.h>
+ #include <linux/types.h>
+@@ -436,6 +439,9 @@
+     }
+     file->private_data = dev;
+     MOD_INC_USE_COUNT;
++#ifdef CONFIG_PSBBN_MMCE
++    psbbn_early_console_graphics_handoff();
++#endif
+     return 0;
+ }
+ 
+--- a/include/linux/init.h
++++ b/include/linux/init.h
+@@ -50,8 +50,16 @@
+ 
+ extern initcall_t __initcall_start, __initcall_end;
+ 
++#ifdef CONFIG_PSBBN_MMCE
++extern int psbbn_run_initcall(initcall_t function, const char *name);
++#define __initcall(fn) \
++    static int __init psbbn_initcall_##fn(void) \
++    { return psbbn_run_initcall(fn, #fn); } \
++    static initcall_t __initcall_##fn __init_call = psbbn_initcall_##fn
++#else
+ #define __initcall(fn)								\
+ 	static initcall_t __initcall_##fn __init_call = fn
++#endif
+ #define __exitcall(fn)								\
+ 	static exitcall_t __exitcall_##fn __exit_call = fn
+ 
+--- a/init/main.c
++++ b/init/main.c
+@@ -590,6 +590,9 @@
+ #if defined(CONFIG_ARCH_DRAGONBALL)
+         led_lit(0x5);
+ #endif
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: architecture setup\n");
++#endif
+ 	setup_arch(&command_line);
+ #if defined(CONFIG_ARCH_DRAGONBALL)
+         led_lit(0x40);
+@@ -599,10 +602,22 @@
+ #if defined (CONFIG_ARCH_DRAGONBALL)
+         dragonball_init_regs();
+ #endif
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: exception setup\n");
++#endif
+ 	trap_init();
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: interrupt setup\n");
++#endif
+ 	init_IRQ();
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: scheduler setup\n");
++#endif
+ 	sched_init();
+ 	softirq_init();
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: timer setup\n");
++#endif
+ 	time_init();
+ #if defined(CONFIG_ARCH_DRAGONBALL)
+         led_lit(0x50);
+@@ -613,6 +628,9 @@
+ 	 * we've done PCI setups etc, and console_init() must be aware of
+ 	 * this. But we do want output early, in case something goes wrong.
+ 	 */
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: native console setup\n");
++#endif
+ 	console_init();
+ #if defined(CONFIG_ARCH_DRAGONBALL)
+         led_lit(0x0);           // unlit all
+@@ -632,6 +650,9 @@
+ 
+ 	kmem_cache_init();
+ 	sti();
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: delay calibration\n");
++#endif
+ 	calibrate_delay();
+ #if defined(CONFIG_MIPS) && defined(CONFIG_NEW_TIME_C)
+ 	calibrate_mips_counter();
+@@ -643,6 +664,9 @@
+ 		    "disabling it.\n",initrd_start,min_low_pfn << PAGE_SHIFT);
+ 		initrd_start = 0;
+ 	}
++#endif
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: memory initialization\n");
+ #endif
+ 	mem_init();
+ 	kmem_cache_sizes_init();
+--- a/arch/mips/ps2/setup.c
++++ b/arch/mips/ps2/setup.c
+@@ -61,9 +61,21 @@
+ 
+ void ps2_dev_init(void)
+ {
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: PS2 DMA initialization\n");
++#endif
+ 	ps2dma_init();
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: PS2 SIF initialization\n");
++#endif
+ 	ps2sif_init();
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: PS2 RTC initialization\n");
++#endif
+ 	ps2rtc_init();
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: PS2 power initialization\n");
++#endif
+ 	ps2_powerbutton_init();
+ }
+ 
+--- a/drivers/char/mem.c
++++ b/drivers/char/mem.c
+@@ -666,6 +666,9 @@
+ 	i2c_init_all();
+ #endif
+ #if defined(CONFIG_PS2_CONSOLE)
++#ifdef CONFIG_PSBBN_MMCE
++	printk("PSBBN: native PS2 text console\n");
++#endif
+ 	ps2_console_init();
+ #endif
+ #if defined (CONFIG_FB)

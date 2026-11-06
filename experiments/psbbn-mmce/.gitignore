@@ -5,3 +5,6 @@ dist/
 *.elf
 *.o
 SHA256SUMS
+__pycache__/
+boot-dist/
+/psbbn-mmce-boot-v*/

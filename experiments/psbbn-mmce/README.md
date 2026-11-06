@@ -1,6 +1,36 @@
 # PSBBN MMCE diagnostic suite v0.4
 
-The user has selected an 8 GB exFAT test card. A private 7 GiB PSBBN 4.3.0
+Latest experiment: [combined preflight and boot attempt v0.6.12](BOOT.md),
+`psbbn_boot.elf`. v0.6.12 corrects MMCEFHI's selection of the controller/card
+sharing interface; the user reports a successful physical PS2 boot. Controller
+input and repeat boots remain unconfirmed. v0.6.11 fixed repeat-boot
+preflight checks for writable image content. Keep the existing image/profile
+and replace only the USB ELF. The separate PCSX2 test reached English graphical
+network setup with the same kernel/SBIOS. See [EMULATOR.md](EMULATOR.md).
+
+The v0.6 hardware run passed every storage preflight check,
+then stalled while starting sound. v0.6.1 disabled sound and passed final bridge
+checks, then stalled at handoff. v0.6.2 added early screen/fault diagnostics and
+reached H1 after EE shutdown; v0.6.3 removes the following redundant cache
+syscalls. The v0.6.3 screen still stopped visibly at H1; H2 was offscreen,
+making that localization unreliable. v0.6.4 fixes visibility and the early
+renderer transfer path. It reached H2. v0.6.5 fixes a confirmed protected-memory
+read before kernel-mode entry, using an audited assembly gate. The fixed boot
+path reached Linux's K5/start_kernel marker on hardware. v0.6.6 adds visible
+early Linux logs and reached driver initialization. v0.6.7 names each initcall
+and marks native GS takeover, where the user saw K6. v0.6.8 selects graphical
+boot to bypass that takeover and hands the display to the first userspace GS
+opener and reached a CD/DVD-init kernel panic. v0.6.9 fixes a confirmed legacy
+assembler address-store defect by rebuilding the whole kernel with current
+PS2 binutils and explicit O32 ABI. PSBBN UI startup is unconfirmed. Linux can
+write to its image.
+
+New development build: [real-image preflight v0.5](REAL-IMAGE.md),
+`psbbn_real.elf`. It checks the 7 GiB image, large offsets and APA/PFS boot-file
+reads. All these checks passed in the combined v0.6 hardware run. The separate
+v0.5 ELF does not attempt PSBBN boot.
+
+The user now uses a 16 GB exFAT test card. A private 7 GiB PSBBN 4.3.0
 English working image has been rebuilt and host-checked; see
 [SMALL-IMAGE.md](SMALL-IMAGE.md). Its PS2 boot compatibility remains unverified.
 

@@ -1,9 +1,9 @@
-IOP_BIN = ../../build/atad_emu.irx
+IOP_BIN ?= ../../build/atad_emu.irx
 IOP_OBJS = ps2atad.o imports.o exports.o
 IOP_SRC_DIR = src/
 IOP_INC_DIR = include/
-IOP_OBJS_DIR = ../../build/atad/
-IOP_CFLAGS = -I../common -Isrc
+IOP_OBJS_DIR ?= ../../build/atad/
+IOP_CFLAGS = -I../common -Isrc $(ATAD_EXTRA_CFLAGS)
 .DEFAULT_GOAL := all
 all: $(IOP_BIN)
 include $(PS2SDK)/Defs.make

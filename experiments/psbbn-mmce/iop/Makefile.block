@@ -1,0 +1,15 @@
+IOP_BIN = ../build/block_rpc.irx
+IOP_OBJS = block.o block_imports.o
+IOP_SRC_DIR = ./
+IOP_OBJS_DIR = ../build/block_rpc/
+IOP_CFLAGS = -I../include -Wall -Wextra -Werror $(BLOCK_EXTRA_CFLAGS)
+.DEFAULT_GOAL := all
+all: $(IOP_BIN)
+include $(PS2SDK)/Defs.make
+include $(PS2SDK)/samples/Makefile.iopglobal
+$(IOP_OBJS_DIR)block_imports.c: block_imports.lst block_imports.h
+	mkdir -p $(IOP_OBJS_DIR)
+	printf '%s\n' '#include "block_imports.h"' > $@
+	cat block_imports.lst >> $@
+$(IOP_OBJS_DIR)block_imports.o: $(IOP_OBJS_DIR)block_imports.c
+	$(IOP_C_COMPILE) $(IOP_IETABLE_CFLAGS) -c $< -o $@

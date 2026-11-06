@@ -1,0 +1,13 @@
+# Read-only preflight build of pinned PS2SDK APA; no DEV9 dependency.
+IOP_BIN = ../../build/apa_ro.irx
+IOP_OBJS = hdd_fio.o hdd_blkio.o hdd.o imports.o password.o misc.o cache.o apa.o journal.o free.o
+IOP_SRC_DIR = src/
+IOP_INC_DIR = src/
+IOP_OBJS_DIR = ../../build/apa_ro/
+IOP_CFLAGS = -DAPA_USE_ATAD -DAPA_OSD_VER -DPSBBN_READ_ONLY -DIOMANX_OLD_NAME_COMPATIBILITY=0 -DIOMANX_OLD_NAME_ADDDELDRV=0 -I../libapa/include
+.DEFAULT_GOAL := all
+all: $(IOP_BIN)
+include $(PS2SDK)/Defs.make
+include $(PS2SDK)/samples/Makefile.iopglobal
+$(IOP_OBJS_DIR)%.o: ../libapa/src/%.c
+	$(IOP_CC) $(IOP_CFLAGS) $(IOP_INCS) -c $< -o $@

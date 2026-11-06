@@ -21,6 +21,8 @@
  * @return NULL on error.
  */
 iop_library_t *ioplib_getByName(const char *name);
+/* Find a compatible major version; do not confuse legacy aliases with v2. */
+iop_library_t *ioplib_getByNameVersion(const char *name, unsigned int version);
 unsigned int ioplib_getTableSize(iop_library_t *lib);
 
 

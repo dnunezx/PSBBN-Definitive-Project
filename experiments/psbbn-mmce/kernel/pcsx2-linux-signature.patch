@@ -1,0 +1,7 @@
+--- a/pcsx2/R5900OpcodeImpl.cpp
++++ b/pcsx2/R5900OpcodeImpl.cpp
+@@ -952,3 +952,3 @@
+ 	const bool linuxSyscall =
+ 		cpuRegs.GPR.n.v0.UL[0] >= 4000 && cpuRegs.GPR.n.v0.UL[0] < 5000 &&
+-		cpuRegs.pc < 0x80000000;
++		cpuRegs.pc < 0x80000000 && memRead32(0x80001004) == 0x62325350;

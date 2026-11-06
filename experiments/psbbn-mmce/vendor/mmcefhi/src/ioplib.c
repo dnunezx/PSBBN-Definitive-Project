@@ -40,6 +40,26 @@ iop_library_t *ioplib_getByName(const char *name)
     return NULL;
 }
 
+iop_library_t *ioplib_getByNameVersion(const char *name, unsigned int version)
+{
+    iop_library_t *libptr = GetLoadcoreInternalData()->let_next;
+    iop_library_t *best = NULL;
+    int i;
+
+    for (; libptr != NULL; libptr = libptr->prev) {
+        for (i = 0; i < 8; i++) {
+            if (libptr->name[i] != name[i])
+                break;
+        }
+        if (i == 8 && (libptr->version >> 8) == (version >> 8) &&
+            libptr->version >= version &&
+            (best == NULL || libptr->version > best->version))
+            best = libptr;
+    }
+
+    return best;
+}
+
 unsigned int ioplib_getTableSize(iop_library_t *lib)
 {
     void **exp;

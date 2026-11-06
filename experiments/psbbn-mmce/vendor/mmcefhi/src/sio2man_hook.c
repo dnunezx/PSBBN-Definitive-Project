@@ -14,6 +14,19 @@
 static int lock_sema      = -1;
 static int lock_sema2     = -1;
 static u16 hooked_version = 0;
+static iop_library_t *hooked_library = NULL;
+
+static iop_library_t *sio2man_find_library(void)
+{
+    /* Modern SIO2MAN also registers a same-name v1 compatibility table.
+       Hook the v2 table used by our PADMAN/MCMAN, regardless of list order. */
+    iop_library_t *lib = ioplib_getByNameVersion("sio2man", IRX_VER(2, 0));
+    if (lib == NULL)
+        lib = ioplib_getByNameVersion("sio2man", IRX_VER(1, 2));
+    if (lib == NULL)
+        lib = ioplib_getByName("sio2man");
+    return lib;
+}
 
 intrman_internals_t *mmce_sio2_intrman_internals_ptr = NULL;
 
@@ -109,6 +122,7 @@ static void _sio2man_unhook(iop_library_t *lib)
     }
 
     hooked_version = 0;
+    hooked_library = NULL;
 }
 
 static void _sio2man_hook(iop_library_t *lib)
@@ -152,6 +166,7 @@ static void _sio2man_hook(iop_library_t *lib)
         _26_psio2_transfer_reset();
 
         hooked_version = lib->version;
+        hooked_library = lib;
     } else {
         DPRINTF("ERROR: sio2man version 0x%x not supported\n", lib->version);
     }
@@ -215,7 +230,7 @@ int sio2man_hook_init()
     lock_sema2   = CreateSema(&sema);
 
     // Hook into 'sio2man' now if it's already loaded
-    lib = ioplib_getByName("sio2man");
+    lib = sio2man_find_library();
     if (lib != NULL) {
         // Get sio2man intr handler
         sio2man_intr_handler_ptr = mmce_sio2_intrman_internals_ptr->interrupt_handler_table[17].handler; //TODO: mode set in lowest 2 bits
@@ -257,7 +272,7 @@ void sio2man_hook_deinit()
     //DPRINTF("%s\n", __FUNCTION__);
 
     // Unhook 'sio2man'
-    lib = ioplib_getByName("sio2man");
+    lib = hooked_library;
     if (lib != NULL) {
         _sio2man_unhook(lib);
         ioplib_relinkExports(lib);
@@ -265,13 +280,13 @@ void sio2man_hook_deinit()
 
     // Unhook 'loadcore'
     lib = ioplib_getByName("loadcore");
-    if (lib != NULL) {
+    if (lib != NULL && pRegisterLibraryEntries != NULL) {
         ioplib_hookExportEntry(lib, 6, pRegisterLibraryEntries);
     }
 
     // Unhook 'intrman'
     lib = ioplib_getByName("intrman");
-    if (lib != NULL) {
+    if (lib != NULL && pRegisterIntrHandler != NULL) {
         ioplib_hookExportEntry(lib, 4, pRegisterIntrHandler);
     }
 

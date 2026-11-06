@@ -26,6 +26,8 @@ uint32_t fhi_size(int file_handle);
 int fhi_read(int file_handle, void *buffer, unsigned int sector_start, unsigned int sector_count);
 // Write SECTORS to file
 int fhi_write(int file_handle, const void *buffer, unsigned int sector_start, unsigned int sector_count);
+/* Local lifecycle extension: close the preflight's ATA0 handle before RW reopen. */
+int fhi_close(int file_handle);
 
 #define fhi_IMPORTS_start DECLARE_IMPORT_TABLE(fhi, 1, 1)
 #define fhi_IMPORTS_end END_IMPORT_TABLE
@@ -33,6 +35,7 @@ int fhi_write(int file_handle, const void *buffer, unsigned int sector_start, un
 #define I_fhi_size DECLARE_IMPORT(4, fhi_size)
 #define I_fhi_read DECLARE_IMPORT(5, fhi_read)
 #define I_fhi_write DECLARE_IMPORT(6, fhi_write)
+#define I_fhi_close DECLARE_IMPORT(7, fhi_close)
 
 #endif // _IOP
 #endif // FHI_H

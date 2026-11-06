@@ -1,5 +1,14 @@
 # Existing probe and upstream storage review
 
+## v0.5 real-image preflight and Linux storage finding
+
+`psbbn_real.elf` now builds with read-only APA/PFS and checks the private 7 GiB
+image and full boot-file fingerprints. No v0.5 hardware test is recorded.
+See [REAL-IMAGE.md](REAL-IMAGE.md). Local kernel disassembly found direct
+hardware IDE register accesses and Linux DMA RPC services; ATAD interception
+alone does not cover them. Evidence and next work are in
+[BOOT-INVESTIGATION.md](BOOT-INVESTIGATION.md).
+
 ## v0.4 virtual ATA hardware milestone
 
 The user's final v0.4 screen shows all 11 groups PASS. Verified rates are
@@ -110,6 +119,6 @@ directly; it does not require a full rebuild of Neutrino's loader.
 5. Which module substitutions survive PSBBN's own module loading?
 6. Do large offsets, errors, reads/writes, and latency work sufficiently?
 
-No APA/PFS driver is automatically loaded here. PSBBN entry points and Sony
+The original v0.4 suite does not load APA/PFS. PSBBN entry points and Sony
 module requirements have not been established, and no Sony files are included.
 The remaining boot-layer tests require separate results beyond report 3.

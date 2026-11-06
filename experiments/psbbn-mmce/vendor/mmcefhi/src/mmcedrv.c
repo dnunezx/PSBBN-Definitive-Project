@@ -159,6 +159,19 @@ int mmcedrv_read_sector(int fd, u32 sector, u32 count, void *buffer)
     return sectors_read;
 }
 
+/* Close protocol copied from this pinned branch's mmce_fs_close lifecycle. */
+int mmcedrv_close_handle(int fd)
+{
+    u8 wrbuf[4] = {MMCE_ID, MMCE_CMD_FS_CLOSE, MMCE_RESERVED, (u8)fd};
+    u8 rdbuf[6] = {0};
+    int res;
+    if (fd < 0 || fd >= 250) return -1;
+    mmce_sio2_lock();
+    res = mmce_sio2_tx_rx_pio(4, 6, wrbuf, rdbuf, &timeout_1s);
+    mmce_sio2_unlock();
+    return res >= 0 && rdbuf[1] == MMCE_REPLY_CONST && rdbuf[4] == 0 ? 0 : -1;
+}
+
 int mmcedrv_read(int fd, int size, void *ptr)
 {
     int res;

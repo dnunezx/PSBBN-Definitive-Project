@@ -22,6 +22,7 @@ DECLARE_EXPORT_TABLE(fhi, 1, 1)
     DECLARE_EXPORT(fhi_size)
     DECLARE_EXPORT(fhi_read)
     DECLARE_EXPORT(fhi_write)
+    DECLARE_EXPORT(fhi_close)
 END_EXPORT_TABLE
 #endif
 
