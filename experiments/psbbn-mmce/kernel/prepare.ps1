@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
 $experimentRoot = Split-Path -Parent $PSScriptRoot
 $sourceDir = Join-Path $experimentRoot '.upstream/psbbn-kernel'
-$cacheDir = Join-Path $experimentRoot 'private'
 $buildDir = Join-Path $experimentRoot 'build'
+$cacheDir = Join-Path $buildDir 'toolchains'
 $revision = '80b14105512ed6114c1defa8e9dee40679072874'
 New-Item -ItemType Directory -Force -Path $cacheDir,$buildDir | Out-Null
 if (-not (Test-Path -LiteralPath (Join-Path $sourceDir '.git'))) {

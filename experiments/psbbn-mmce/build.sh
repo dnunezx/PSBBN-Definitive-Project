@@ -21,9 +21,8 @@ rm -f dist/ata_probe.elf
 cp psbbn_suite.elf psbbn_real.elf dist/
 cp tests/probe.dat dist/PSBBN/
 python3 tests/make_test_disk.py dist/PSBBN/diagnostic.img
-cp README.md SUITE.md REAL-IMAGE.md BOOT-INVESTIGATION.md VENDOR.md INVESTIGATION.md SMALL-IMAGE.md THIRD-PARTY-NOTICES.md dist/
+cp README.md SUITE.md REAL-IMAGE.md BOOT.md VENDOR.md SMALL-IMAGE.md THIRD-PARTY-NOTICES.md dist/
 mkdir -p dist/tests
-cp tests/results.md dist/tests/
 cp tests/make_real_checks.py dist/tests/
 cp -R licenses dist/
 sha256sum "$PS2SDK"/iop/irx/{iomanX,fileXio,sio2man,mmceman,bdm,bdmfs_fatfs,usbd,usbmass_bd}.irx > dist/SDK-MODULE-SHA256SUMS

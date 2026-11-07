@@ -1,8 +1,6 @@
 # Automatic diagnostic suite v0.4
 
-The v0.3 fixture test passed on the user's hardware. This suite bundles the next
-storage tests into **one ELF and one automatic run**. The user's v0.4 photograph
-now confirms all 11 groups PASS; see `tests/results.md` for the observed scope.
+Checks MMCE, FHI and Neutrino ATA reads in one run using a generated 8 MiB disk.
 
 ## Copy once, run once
 

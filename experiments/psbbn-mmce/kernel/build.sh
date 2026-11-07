@@ -3,10 +3,10 @@ set -euo pipefail
 # Run from the experiment root inside psbbn-linux-build. Build on Linux's
 # case-sensitive filesystem, never directly on the Windows source checkout.
 printf '%s  %s\n' \
-  e3990ee12125ae63c703d54c5a834f79a83be9f7daa834e801081da81c60af8a private/binutils-2.9EE-cross.tar.gz \
-  2970813c5e5bdae69019a3b416f09c1a7dbcb69c8e523118e55ec77b9abcd373 private/gcc-2.95.2-cross.tar.gz | sha256sum -c -
-tar -C /usr/local -xzf private/binutils-2.9EE-cross.tar.gz
-tar -C /usr/local -xzf private/gcc-2.95.2-cross.tar.gz
+  e3990ee12125ae63c703d54c5a834f79a83be9f7daa834e801081da81c60af8a build/toolchains/binutils-2.9EE-cross.tar.gz \
+  2970813c5e5bdae69019a3b416f09c1a7dbcb69c8e523118e55ec77b9abcd373 build/toolchains/gcc-2.95.2-cross.tar.gz | sha256sum -c -
+tar -C /usr/local -xzf build/toolchains/binutils-2.9EE-cross.tar.gz
+tar -C /usr/local -xzf build/toolchains/gcc-2.95.2-cross.tar.gz
 /usr/local/ps2/bin/ee-gcc --version
 /opt/psbbn-binutils/as --version | head -1
 mkdir -p /tmp/psbbn-kernel

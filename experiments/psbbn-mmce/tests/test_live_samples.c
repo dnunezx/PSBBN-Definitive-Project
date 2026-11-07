@@ -4,7 +4,7 @@
 int main(void)
 {
     struct real_session_samples session = {{0}, {0}};
-    /* Factory CRC from the user's log; later filesystem content differs. */
+    /* Filesystem writes can change a factory sample between boots. */
     const unsigned int factory = 0x37005e89, live = 0x681d16fa;
     assert(factory != live && !real_session_matches(&session, 21, live));
     assert(real_session_learn(&session, 21, live, live));

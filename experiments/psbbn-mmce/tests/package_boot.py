@@ -1,4 +1,4 @@
-"""Package the boot test and corresponding open-source code; exclude private data."""
+"""Package the boot launcher and corresponding source."""
 from pathlib import Path, PurePosixPath
 import hashlib
 import os
@@ -31,7 +31,8 @@ excluded = {'private', '.upstream', 'build', 'dist', 'boot-dist', '__pycache__',
 with zipfile.ZipFile(source_zip, 'w', zipfile.ZIP_DEFLATED) as archive:
     archive.write(source_archive, 'build/psbbn-kernel-source.tar')
     for directory, directories, files in os.walk(ROOT):
-        directories[:] = sorted(name for name in directories if name not in excluded)
+        directories[:] = sorted(name for name in directories
+                                if name not in excluded and not name.startswith('psbbn-mmce-boot-v'))
         for name in sorted(files):
             file = Path(directory) / name
             relative = file.relative_to(ROOT)
