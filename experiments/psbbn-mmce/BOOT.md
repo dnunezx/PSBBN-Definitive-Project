@@ -15,6 +15,17 @@ reliability remain unconfirmed. Sound is disabled; networking is unverified.
    your usual ELF launcher. Leave USB and the MemCard PRO2 connected.
 4. Allow startup and any content-management update to finish.
 
+The full-image ZIP already includes both required MMCE files. Copy the entire
+`PSBBN` folder so the card contains:
+
+```text
+PSBBN/psbbn.img
+PSBBN/real-checks.bin
+```
+
+`real-checks.bin` must stay beside the image on the MMCE card. Use the bundled
+file; no generation step is needed. Only `psbbn_boot.elf` goes on USB.
+
 Copy the image as a file; do not flash it over the microSD's partition table.
 The image exceeds FAT32's per-file limit, so the MMCE card must use exFAT.
 The launcher contains the kernel, SBIOS and extra IOP modules.

@@ -7,6 +7,9 @@ required IOP modules; no separate Neutrino installation is needed.
 ## Hardware boot
 
 Use `psbbn_boot.elf` v0.6.12 with the matching 7 GiB image and checks file.
+The [full-image download](https://github.com/dnunezx/PSBBN-Definitive-Project/releases/tag/psbbn-mmce-v0.6.12)
+includes both required card files: `PSBBN/psbbn.img` and `PSBBN/real-checks.bin`.
+Copy its entire `PSBBN` folder to the MMCE microSD; put `psbbn_boot.elf` on USB.
 See [BOOT.md](BOOT.md) for setup and building, and [SMALL-IMAGE.md](SMALL-IMAGE.md)
 for image details. A physical PS2 boot has been reported. Controller input and
 repeat-boot reliability remain unconfirmed. Sound is disabled.
