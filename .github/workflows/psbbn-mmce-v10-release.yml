@@ -28,12 +28,12 @@ jobs:
           set -euo pipefail
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
           mkdir -p release-input release-output
-          gh release download "$RELEASE_TAG" --pattern psbbn-mmce-v10-image.zip --dir release-input
+          gh release download "$RELEASE_TAG" --pattern psbbn-mmce-v10-preview.zip --dir release-input
           gh release view "$RELEASE_TAG" --json body --jq .body > release-output/INSTALL.md
           python3 - <<'PY'
           from pathlib import Path
           import zipfile,struct,hashlib
-          root=Path('experiments/psbbn-mmce'); source=Path('release-input/psbbn-mmce-v10-image.zip')
+          root=Path('experiments/psbbn-mmce'); source=Path('release-input/psbbn-mmce-v10-preview.zip')
           with zipfile.ZipFile(source) as z:
               expected={'psbbn_boot.elf':'949beab2572a9bda2610050136831753c2e494bf0ec4789c53d10b45f205422c',
                         'psbbn_diagnostic.elf':'a76d7dde0f4eec91a84d78667a0552c53af80de0cde7bf160ac5c11019e2996b'}
@@ -97,43 +97,63 @@ jobs:
           assert hashlib.sha256(native).hexdigest()==manifest['native_sha256']
           (out/'BUILD-VERIFICATION.json').write_text(json.dumps(manifest,indent=2)+'\n')
           shutil.copyfile('release-input/real-checks.bin',out/'real-checks.bin')
-          with zipfile.ZipFile(out/'psbbn-mmce-v10-launchers.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
-              for name in ('psbbn_boot.elf','psbbn_diagnostic.elf','INSTALL.md','BUILD-VERIFICATION.json'): z.write(out/name,name)
-              z.write(out/'real-checks.bin','PSBBN/real-checks.bin')
-              for p in (root/'licenses').glob('*.txt'): z.write(p,'licenses/'+p.name)
-          # Preserve the audited image ZIP; the compiled launchers above were checked
-          # against its complete loaded programs, and the native payload is exact.
-          shutil.copyfile('release-input/psbbn-mmce-v10-image.zip',out/'psbbn-mmce-v10-image.zip')
           PY
           curl --fail --location --retry 3 https://api.github.com/repos/CosmicScale/PSBBN-Definitive-Patch-Kernel/tarball/80b14105512ed6114c1defa8e9dee40679072874 -o release-input/kernel-source.tar.gz
           curl --fail --location --retry 3 https://api.github.com/repos/rickgaiser/neutrino/tarball/v1.8.0 -o release-input/neutrino-source.tar.gz
           python3 - <<'PY'
           from pathlib import Path
-          import zipfile,subprocess,hashlib
-          out=Path('release-output'); root='experiments/psbbn-mmce/'
+          import zipfile,subprocess,hashlib,json
+          out=Path('release-output'); root=Path('experiments/psbbn-mmce')
+          body=(out/'INSTALL.md').read_text().split('\nDownload SHA-256:',1)[0].rstrip()+'\n'
+          (out/'INSTALL.md').write_text(body)
+          manifest=json.loads((out/'BUILD-VERIFICATION.json').read_text())
+          checks={}
+          archive=out/'psbbn-mmce-v10-preview.zip'
           files=subprocess.check_output(['git','ls-files','-z']).decode().split('\0')
-          with zipfile.ZipFile(out/'psbbn-mmce-v10-source.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+          with zipfile.ZipFile('release-input/psbbn-mmce-v10-preview.zip') as seed, zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
+              h=hashlib.sha256(); size=0
+              with seed.open('PSBBN/psbbn.img') as src,z.open('PSBBN/psbbn.img','w',force_zip64=True) as dst:
+                  while chunk:=src.read(4*1024**2): dst.write(chunk); h.update(chunk); size+=len(chunk)
+              assert size==7516192768 and h.hexdigest()==manifest['image_sha256']
+              checks['PSBBN/psbbn.img']=h.hexdigest()
+              def add(name,data):
+                  assert name not in checks and not name.startswith('/') and '..' not in Path(name).parts
+                  z.writestr(name,data); checks[name]=hashlib.sha256(data).hexdigest()
+              for name in ('psbbn_boot.elf','psbbn_diagnostic.elf','INSTALL.md','BUILD-VERIFICATION.json'): add(name,(out/name).read_bytes())
+              add('PSBBN/real-checks.bin',(out/'real-checks.bin').read_bytes())
+              for p in sorted((root/'licenses').glob('*.txt')): add('licenses/'+p.name,p.read_bytes())
+              image_manifest=json.loads(seed.read('IMAGE-MANIFEST.json'))
+              assert image_manifest['image_sha256']==manifest['image_sha256']
+              assert image_manifest['checks_sha256']==checks['PSBBN/real-checks.bin']
+              add('IMAGE-MANIFEST.json',(json.dumps(image_manifest,indent=2)+'\n').encode())
+              prefix=str(root)+'/'
               for name in files:
                   if not name: continue
-                  relative=name.removeprefix(root)
-                  production=name.startswith(root) and (relative.split('/')[0] in ('src','include','iop','kernel','vendor','image','licenses') or relative in ('Makefile','Makefile.release','Dockerfile'))
+                  relative=name.removeprefix(prefix)
+                  production=name.startswith(prefix) and (relative.split('/')[0] in ('src','include','iop','kernel','vendor','image','licenses') or relative in ('Makefile','Makefile.release','Dockerfile'))
                   assets=name.startswith('scripts/assets/neutrino/') or name in ('scripts/assets/database/TitlesDB_PS2.csv','icons/art/ps2.png','icons/ico/dvd.ico')
                   if (production or assets or name.startswith('.github/workflows/')) and Path(name).is_file() and Path(name).suffix.lower() not in ('.o','.log','.img','.md'):
-                      z.write(name,name)
-              z.write('release-input/kernel-source.tar.gz','upstream/kernel-source.tar.gz')
-              z.write('release-input/neutrino-source.tar.gz','upstream/neutrino-source.tar.gz')
-          names=('psbbn-mmce-v10-image.zip','psbbn-mmce-v10-launchers.zip','psbbn-mmce-v10-source.zip','BUILD-VERIFICATION.json')
-          lines=[]
-          for name in names:
-              h=hashlib.sha256()
-              with (out/name).open('rb') as f:
-                  while chunk:=f.read(4*1024**2): h.update(chunk)
-              lines.append(h.hexdigest()+'  '+name)
-          (out/'SHA256SUMS').write_text('\n'.join(lines)+'\n')
+                      assert not any(p in Path(name).parts for p in ('tools','tests','private','build','__pycache__'))
+                      add('source/'+name,Path(name).read_bytes())
+              for name in ('kernel-source.tar.gz','neutrino-source.tar.gz'): add('source/upstream/'+name,Path('release-input',name).read_bytes())
+              sums=''.join(checks[n]+'  '+n+'\n' for n in sorted(checks))
+              z.writestr('SHA256SUMS',sums)
+          assert archive.stat().st_size<2*1024**3
+          with zipfile.ZipFile(archive) as z:
+              assert len(z.namelist())==len(checks)+1 and not any(p.is_dir() for p in z.infolist())
+              assert not any(n in ('CD/','DVD/') or n.endswith('.zip') for n in z.namelist())
+          digest=hashlib.file_digest(archive.open('rb'),'sha256').hexdigest()
+          (out/'RELEASE-BODY.md').write_text(body+'\nDownload SHA-256: `'+digest+'`\n')
+          print('One complete ZIP:',archive.stat().st_size,'bytes; SHA-256',digest)
           PY
       - name: Attach assets to draft without publishing
         run: |
           set -euo pipefail
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
-          gh release upload "$RELEASE_TAG" release-output/psbbn-mmce-v10-image.zip release-output/psbbn-mmce-v10-launchers.zip release-output/psbbn-mmce-v10-source.zip release-output/BUILD-VERIFICATION.json release-output/SHA256SUMS --clobber
-          gh release edit "$RELEASE_TAG" --draft --prerelease --latest=false --target "$GITHUB_SHA"
+          gh release upload "$RELEASE_TAG" release-output/psbbn-mmce-v10-preview.zip --clobber
+          gh release edit "$RELEASE_TAG" --draft --prerelease --latest=false --target "$GITHUB_SHA" --notes-file release-output/RELEASE-BODY.md
+          for obsolete in psbbn-mmce-v10-image.zip psbbn-mmce-v10-launchers.zip psbbn-mmce-v10-source.zip BUILD-VERIFICATION.json SHA256SUMS; do
+            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$obsolete"; then
+              gh release delete-asset "$RELEASE_TAG" "$obsolete" --yes
+            fi
+          done
