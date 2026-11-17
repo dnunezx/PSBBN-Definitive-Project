@@ -54,7 +54,7 @@ int pfsFormatSub(pfs_block_device_t *blockDev, int fd, u32 sub, u32 reserved, u3
 		{
 			if (j && ((j & 0x1F)==0))
 				b++;
-			*b |= 1 << (j & 0x1F);
+			*b |= 1U << (j & 0x1F);
 		}
 
 		PFS_PRINTF(PFS_DRV_NAME": Format sub: sub = %ld, sector start = %ld, ", sub, sector);

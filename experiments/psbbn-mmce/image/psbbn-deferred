@@ -1,0 +1,20 @@
+#!/bin/sh
+# Optional network servers start after the dashboard initializer completes.
+loop=0
+while [ ! -f /var/run/psbbn-ui-ready ] && [ "$loop" -lt 600 ]; do
+    /bin/usleep 100000
+    loop=$((loop+1))
+done
+if [ -f /var/run/psbbn-ui-ready ]; then
+    echo 'PSBBN deferred: dashboard initialized' >> /opt1/psbbn-startup.log
+else
+    echo 'PSBBN deferred: readiness timeout; starting optional servers' >> /opt1/psbbn-startup.log
+fi
+/etc/rc.d/init.d/inet start
+/usr/sbin/httpd &
+# Snapshot cache work is bounded and delayed beyond initial screen loading.
+/bin/sleep 15
+while /sbin/pidof bn > /dev/null 2>&1; do
+    /etc/rc.d/psbbn-cache save >> /opt1/psbbn-startup.log 2>&1
+    /bin/sleep 30
+done

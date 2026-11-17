@@ -14,6 +14,12 @@ IRX_ID("sdr_driver", 4, 1);
 // Based on the module from SDK 3.1.0.
 
 extern struct irx_export_table _exp_sdrdrv;
+#ifdef PSBBN_QUIET_START
+/* Retail startup must not depend on the IOP's optional debug console. */
+#define START_LOG(...) ((void)0)
+#else
+#define START_LOG(...) Kprintf(__VA_ARGS__)
+#endif
 // Unofficial: wrap members for relative access
 SdrInfo g_sdrInfo;
 
@@ -31,7 +37,7 @@ static int module_start(int ac, char **av)
 	CpuResumeIntr(state);
 	if ( code )
 		return 1;
-	Kprintf("SDR driver version 4.0.1 (C) SCEI\n");
+	START_LOG("SDR driver version 4.0.1 (C) SCEI\n");
 	initial_priority_main = 24;
 	g_eeCBInfo.m_initial_priority_cb = 24;
 	g_sdrInfo.m_thid_main = 0;
@@ -48,7 +54,7 @@ static int module_start(int ac, char **av)
 				initial_priority_main = strtol(p, 0, 10);
 				if ( (unsigned int)(initial_priority_main - 9) >= 0x73 )
 				{
-					Kprintf(" SDR driver error: invalid priority %d\n", initial_priority_main);
+					START_LOG(" SDR driver error: invalid priority %d\n", initial_priority_main);
 					initial_priority_main = 24;
 				}
 			}
@@ -59,22 +65,23 @@ static int module_start(int ac, char **av)
 				g_eeCBInfo.m_initial_priority_cb = strtol(&p[1], 0, 10);
 				if ( (unsigned int)(g_eeCBInfo.m_initial_priority_cb - 9) >= 0x73 )
 				{
-					Kprintf(" SDR driver error: invalid priority %d\n", g_eeCBInfo.m_initial_priority_cb);
+						START_LOG(" SDR driver error: invalid priority %d\n", g_eeCBInfo.m_initial_priority_cb);
 					g_eeCBInfo.m_initial_priority_cb = 24;
 				}
 			}
 			if ( g_eeCBInfo.m_initial_priority_cb < initial_priority_main )
 			{
-				Kprintf(" SDR driver ERROR:\n");
-				Kprintf("   callback th. priority is higher than main th. priority.\n");
+				START_LOG(" SDR driver ERROR:\n");
+				START_LOG("   callback th. priority is higher than main th. priority.\n");
 				g_eeCBInfo.m_initial_priority_cb = initial_priority_main;
 			}
-			Kprintf(
+			START_LOG(
 				" SDR driver: thread priority: main=%d, callback=%d\n",
 				initial_priority_main,
 				g_eeCBInfo.m_initial_priority_cb);
 		}
 	}
+	memset(&thprarm, 0, sizeof(thprarm));
 	thprarm.attr = TH_C;
 	thprarm.thread = sce_sdr_loop;
 	// Unofficial: original stack size was 2048
@@ -83,9 +90,19 @@ static int module_start(int ac, char **av)
 	thprarm.priority = initial_priority_main;
 	g_sdrInfo.m_thid_main = CreateThread(&thprarm);
 	if ( g_sdrInfo.m_thid_main <= 0 )
+	{
+		ReleaseLibraryEntries(&_exp_sdrdrv);
+		g_sdrInfo.m_thid_main = 0;
 		return 1;
-	StartThread(g_sdrInfo.m_thid_main, &g_sdrInfo);
-	Kprintf(" Exit rsd_main \n");
+	}
+	if ( StartThread(g_sdrInfo.m_thid_main, &g_sdrInfo) < 0 )
+	{
+		DeleteThread(g_sdrInfo.m_thid_main);
+		g_sdrInfo.m_thid_main = 0;
+		ReleaseLibraryEntries(&_exp_sdrdrv);
+		return 1;
+	}
+	START_LOG(" Exit rsd_main \n");
 	return 2;
 }
 

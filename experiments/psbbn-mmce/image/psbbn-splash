@@ -1,0 +1,45 @@
+#!/bin/sh
+# Start splash shutdown early; require it to finish before BN owns the GS.
+base=${PSBBN_TEST_ROOT:-}
+case "$1" in
+signal)
+    if [ -f "$base/var/run/bn_asap.pid" ]; then
+        splash_pid=`"$base/bin/cat" "$base/var/run/bn_asap.pid"`
+        case "$splash_pid" in
+            ''|0|*[!0-9]*) exit 0 ;;
+            *)
+                for running_pid in `"$base/sbin/pidof" bn_asap`; do
+                    if [ "$running_pid" = "$splash_pid" ]; then
+                        "$base/bin/kill" -ALRM "$splash_pid"
+                        break
+                    fi
+                done
+                ;;
+        esac
+    fi
+    ;;
+wait)
+    loop=0
+    while "$base/sbin/pidof" bn_asap > /dev/null 2>&1; do
+        if [ "$loop" -ge 30 ]; then
+            "$base/usr/bin/killall" -9 bn_asap
+            break
+        fi
+        "$base/bin/usleep" 100000
+        loop=$((loop+1))
+    done
+    # Replace the unconditional two-second delay with an actual exit check.
+    loop=0
+    while "$base/sbin/pidof" bn_asap > /dev/null 2>&1; do
+        if [ "$loop" -ge 20 ]; then
+            echo 'PSBBN splash: process did not exit; dashboard not started'
+            exit 1
+        fi
+        "$base/bin/usleep" 100000
+        loop=$((loop+1))
+    done
+    "$base/bin/rm" -f "$base/var/run/bn_asap.pid"
+    ;;
+*) exit 2 ;;
+esac
+exit 0

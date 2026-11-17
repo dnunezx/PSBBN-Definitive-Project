@@ -1,5 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
+variant=${PSBBN_KERNEL_VARIANT:-mmce}
+case "$variant" in
+  mmce) output_name=linux ;;
+  usb) output_name=linux-usb ;;
+  *) echo "Unknown kernel variant: $variant" >&2; exit 1 ;;
+esac
+sound=${PSBBN_ENABLE_SOUND:-0}
+case "$variant:$sound" in
+  mmce:1) output_name=linux-sound ;;
+  mmce:0|usb:0) ;;
+  *) echo 'Sound testing requires MMCE and PSBBN_ENABLE_SOUND=0 or 1' >&2; exit 1 ;;
+esac
+kernel_output=/work/build/$output_name
+mkdir -p "$kernel_output"
 # Run from the experiment root inside psbbn-linux-build. Build on Linux's
 # case-sensitive filesystem, never directly on the Windows source checkout.
 printf '%s  %s\n' \
@@ -19,6 +33,7 @@ find "$source_dir" -type f -exec perl -e '
     if ($text =~ s/\r\n/\n/g) { open(my $out, ">", $f) or die $!; print $out $text; close($out); }
   }' {} +
 cp kernel/psbbn_mmce.c include/block_rpc.h "$source_dir/drivers/block/"
+perl kernel/instrument_restart.pl "$source_dir"
 cp include/boot_trace.h "$source_dir/include/asm-mips/ps2/"
 cp kernel/boot_trace.c kernel/boot_trace_font.c "$source_dir/arch/mips/ps2/"
 tr -d '\r' < kernel/early-boot.patch > /tmp/early-boot.patch
@@ -30,11 +45,16 @@ sed -i '/include $(TOPDIR)\/Rules.make/i obj-$(CONFIG_PSBBN_MMCE) += psbbn_mmce.
 sed -i '/comment .Block devices./a\if [ "$CONFIG_PS2" = "y" ]; then\n   bool "PSBBN MMCE virtual HDD" CONFIG_PSBBN_MMCE\nfi' "$source_dir/drivers/block/Config.in"
 # Physical IDE and its DEV9/DMA path must be absent from the MMCE kernel.
 sed -i -E 's/^CONFIG_IDE=y/# CONFIG_IDE is not set/; s/^CONFIG_BLK_DEV_IDE=y/# CONFIG_BLK_DEV_IDE is not set/' "$source_dir/.config"
-# v0.6 hangs while loading SDRDRV on the console. Omit both the IOP sound
-# modules and their Linux client for this recovery build; otherwise sound init
-# would repeatedly try to bind to the absent service.
-sed -i -E 's/^CONFIG_PS2_SD=y/# CONFIG_PS2_SD is not set/; s/^CONFIG_SOUND=y/# CONFIG_SOUND is not set/' "$source_dir/.config"
+# The sound test supplies LIBSD/SDRDRV before Linux starts.
+if [ "$sound" = 0 ]; then
+    sed -i -E 's/^CONFIG_PS2_SD=y/# CONFIG_PS2_SD is not set/; s/^CONFIG_SOUND=y/# CONFIG_SOUND is not set/' "$source_dir/.config"
+fi
 printf '\nCONFIG_PSBBN_MMCE=y\n' >> "$source_dir/.config"
+if [ "$variant" = usb ]; then
+    # The IOP hosts the USB disk. Linux OHCI must never take over that bus.
+    sed -i -E 's/^CONFIG_USB=y/# CONFIG_USB is not set/; s/^CONFIG_USB_OHCI=y/# CONFIG_USB_OHCI is not set/; s/^CONFIG_USB_OHCI_PS2=y/# CONFIG_USB_OHCI_PS2 is not set/' "$source_dir/.config"
+    sed -i 's/psbbn-mmce/psbbn-usb/g' "$source_dir/drivers/block/psbbn_mmce.c"
+fi
 cd "$source_dir"
 tr -d '\r' < /work/kernel/slim-rpc-irq.patch > /tmp/slim-rpc-irq.patch
 patch -p1 --batch < /tmp/slim-rpc-irq.patch
@@ -43,28 +63,35 @@ make_args=(ARCH=mips CROSS_COMPILE=/usr/local/ps2/bin/ee-
   'LD=/opt/psbbn-binutils/ld -m elf32lr5900' AS=/opt/psbbn-binutils/as
   AR=/opt/psbbn-binutils/ar NM=/opt/psbbn-binutils/nm)
 set +o pipefail
-yes '' | make "${make_args[@]}" oldconfig > /work/build/kernel-config.log 2>&1
+yes '' | make "${make_args[@]}" oldconfig > "$kernel_output/kernel-config.log" 2>&1
 config_status=${PIPESTATUS[1]}
 set -o pipefail
 test "$config_status" -eq 0
 grep -q '^CONFIG_PSBBN_MMCE=y$' .config
-! grep -q '^CONFIG_PS2_SD=y$' .config
-! grep -q '^CONFIG_SOUND=y$' .config
+if [ "$sound" = 1 ]; then
+    grep -q '^CONFIG_PS2_SD=y$' .config
+    grep -q '^CONFIG_SOUND=y$' .config
+else
+    ! grep -q '^CONFIG_PS2_SD=y$' .config
+    ! grep -q '^CONFIG_SOUND=y$' .config
+fi
+if [ "$variant" = usb ]; then
+    ! grep -Eq '^CONFIG_USB(|_OHCI|_OHCI_PS2)=y$' .config
+fi
 # Preserve the checked-in generated keymap; no host keyboard-layout tool needed.
 touch drivers/char/defkeymap.c
-make "${make_args[@]}" dep > /work/build/kernel-dep.log 2>&1
-make -j8 "${make_args[@]}" vmlinux > /work/build/kernel-compile.log 2>&1
+make "${make_args[@]}" dep > "$kernel_output/kernel-dep.log" 2>&1
+make -j8 "${make_args[@]}" vmlinux > "$kernel_output/kernel-compile.log" 2>&1
 grep -q ' psbbn_mmce_init$' System.map
 if grep -q ' ps2_ide_select$' System.map; then echo 'Physical IDE was unexpectedly linked' >&2; exit 1; fi
-mkdir -p /work/build/linux
-cp vmlinux System.map .config /work/build/linux/
-cp drivers/video/ps2con.c /work/build/linux/ps2con-boot-source.c
+cp vmlinux System.map .config "$kernel_output/"
+cp drivers/video/ps2con.c "$kernel_output/ps2con-boot-source.c"
 # Retain the exact assembly and both objects for a legacy/current comparison.
-make "${make_args[@]}" drivers/ps2/cdvd.s > /work/build/cdvd-assembly.log 2>&1
-cp drivers/ps2/cdvd.s drivers/ps2/cdvd.o /work/build/linux/
-sed 's/\.set[[:space:]]*arch=r5900/.set mips3/g' drivers/ps2/cdvd.s > /work/build/linux/cdvd-legacy.s
-/usr/local/ps2/bin/ee-as -mips2 -mcpu=r5900 -EL /work/build/linux/cdvd-legacy.s -o /work/build/linux/cdvd-legacy.o
-/opt/psbbn-binutils/objdump -dr drivers/ps2/cdvd.o > /work/build/linux/cdvd-current.txt
-/opt/psbbn-binutils/objdump -dr /work/build/linux/cdvd-legacy.o > /work/build/linux/cdvd-legacy.txt
+make "${make_args[@]}" drivers/ps2/cdvd.s > "$kernel_output/cdvd-assembly.log" 2>&1
+cp drivers/ps2/cdvd.s drivers/ps2/cdvd.o "$kernel_output/"
+sed 's/\.set[[:space:]]*arch=r5900/.set mips3/g' drivers/ps2/cdvd.s > "$kernel_output/cdvd-legacy.s"
+/usr/local/ps2/bin/ee-as -mips2 -mcpu=r5900 -EL "$kernel_output/cdvd-legacy.s" -o "$kernel_output/cdvd-legacy.o"
+/opt/psbbn-binutils/objdump -dr drivers/ps2/cdvd.o > "$kernel_output/cdvd-current.txt"
+/opt/psbbn-binutils/objdump -dr "$kernel_output/cdvd-legacy.o" > "$kernel_output/cdvd-legacy.txt"
 readelf -h vmlinux
 sha256sum vmlinux

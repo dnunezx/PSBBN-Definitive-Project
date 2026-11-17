@@ -18,8 +18,11 @@ static struct psbbn_block_packet request __attribute__((aligned(64)));
 #endif
 static struct psbbn_block_packet reply __attribute__((aligned(64)));
 static int writable;
+#ifdef PSBBN_BLOCK_FHI_STATS
+extern int fhi_get_io_stats(void *, unsigned int);
+#endif
 
-static void *handle(int function, void *data, int size)
+static void *handle_request(int function, void *data, int size)
 {
     struct psbbn_block_packet *req = data;
     ata_devinfo_t *info;
@@ -60,6 +63,15 @@ static void *handle(int function, void *data, int size)
         else reply.result = sceAtaDmaTransfer(0, req->data, req->lba, req->count, ATA_DIR_WRITE);
         if (!reply.result) reply.bytes = bytes;
     }
+    return &reply;
+}
+
+static void *handle(int function, void *data, int size)
+{
+    handle_request(function, data, size);
+#ifdef PSBBN_BLOCK_FHI_STATS
+    if (!fhi_get_io_stats(reply.reserved, sizeof(reply.reserved))) reply.flags |= PSBBN_BLOCK_IO_STATS;
+#endif
     return &reply;
 }
 

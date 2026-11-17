@@ -2,6 +2,7 @@ name: PSBBN MMCE Diagnostics
 
 on:
   push:
+    branches: [probe]
     paths:
       - 'experiments/psbbn-mmce/**'
       - '.github/workflows/psbbn-mmce-probe.yml'

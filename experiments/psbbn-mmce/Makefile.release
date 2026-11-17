@@ -1,0 +1,116 @@
+# Production build; uses the verified kernel extracted from the release seed.
+SHELL := /bin/bash
+.ONESHELL:
+.SHELLFLAGS := -euo pipefail -c
+define PSBBN_PREPARE
+from pathlib import Path
+import os
+root=Path.cwd()
+repo=Path(os.environ.get("PSBBN_REPO_ROOT", root.parent.parent))
+"""Embed existing default assets and compact English game metadata."""
+from pathlib import Path
+import os
+import unicodedata
+
+titles = []
+for line in (repo / 'scripts/assets/database/TitlesDB_PS2.csv').read_text(encoding='utf-8-sig').splitlines():
+    fields = line.split('|')
+    if len(fields) >= 3 and len(fields[0]) == 11:
+        text = '|'.join(fields[:3])
+        text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode()
+        titles.append(text)
+assets = {'collection_cover': (repo / 'icons/art/ps2.png').read_bytes(),
+          'collection_icon': (repo / 'icons/ico/dvd.ico').read_bytes(),
+          'collection_titles': ('\n'.join(titles) + '\n').encode('ascii')}
+out = root / 'build/collection_assets.c'
+out.parent.mkdir(exist_ok=True)
+with out.open('w', newline='\n') as stream:
+    for name, data in assets.items():
+        stream.write(f'unsigned char {name}[] __attribute__((aligned(64))) = {{\n')
+        for at in range(0, len(data), 32):
+            stream.write(','.join(str(v) for v in data[at:at+32]) + ',\n')
+        stream.write(f'}};\nunsigned int size_{name} = {len(data)};\n')
+print('Embedded collection defaults and', len(titles), 'title records')
+
+"""Embed the repository's Neutrino runtime in an isolated native launch test."""
+from pathlib import Path
+import hashlib
+import os
+import re
+import zlib
+
+source = repo / 'scripts/assets/neutrino'
+paths = [source / 'neutrino.elf', source / 'version.txt']
+paths += sorted((source / 'config').glob('*.toml'), key=lambda p: p.name)
+paths += sorted((source / 'modules').glob('*'), key=lambda p: p.name)
+files = []
+digest = hashlib.sha256()
+for path in paths:
+    if not path.is_file():
+        raise ValueError('Missing runtime file: ' + str(path))
+    name = path.relative_to(source).as_posix()
+    if not re.fullmatch(r'[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)?', name) or '..' in name:
+        raise ValueError('Invalid runtime path: ' + name)
+    data = path.read_bytes()
+    if not data or len(data) > 1024 * 1024:
+        raise ValueError('Invalid runtime size: ' + name)
+    digest.update(name.encode() + b'\0' + len(data).to_bytes(4, 'little') + data)
+    files.append((name, data))
+identifier = digest.hexdigest()[:12]
+out = root / 'build/native-runtime'
+out.mkdir(parents=True, exist_ok=True)
+(out / 'runtime.h').write_text('''/* Generated from repository assets. */
+#ifndef PSBBN_NATIVE_RUNTIME_H
+#define PSBBN_NATIVE_RUNTIME_H
+struct native_runtime_file { const char *path; unsigned int size, crc; const unsigned char *data; };
+extern const struct native_runtime_file native_runtime_files[];
+extern const unsigned int native_runtime_count;
+extern const char native_runtime_id[];
+#endif
+''')
+with (out / 'runtime.c').open('w', newline='\n') as stream:
+    stream.write('#include "runtime.h"\n')
+    for i, (_, data) in enumerate(files):
+        stream.write(f'static const unsigned char file_{i}[] __attribute__((aligned(64))) = {{\n')
+        for at in range(0, len(data), 32):
+            stream.write(','.join(str(b) for b in data[at:at + 32]) + ',\n')
+        stream.write('};\n')
+    stream.write('const struct native_runtime_file native_runtime_files[] = {\n')
+    for i, (name, data) in enumerate(files):
+        stream.write(f'{{"{name}",{len(data)},0x{zlib.crc32(data):08x}U,file_{i}}},\n')
+    stream.write(f'}};\nconst unsigned int native_runtime_count = {len(files)};\n')
+    stream.write(f'const char native_runtime_id[] = "{identifier}";\n')
+print('Native test runtime:', identifier, len(files), 'files,', sum(len(data) for _, data in files), 'bytes')
+
+
+(root/'build/native_receiver_linkfile').write_text('/*\n# _____     ___ ____     ___ ____\n#  ____|   |    ____|   |        | |____|\n# |     ___|   |____ ___|    ____| |    \\    PS2DEV Open Source Project.\n#-----------------------------------------------------------------------\n# Copyright 2001-2004, ps2dev - http://www.ps2dev.org\n# Licenced under Academic Free License version 2.0\n# Review ps2sdk README & LICENSE files for further details.\n#\n# Linkfile script for ee-ld\n*/\n\nENTRY(native_receiver_entry);\n\nPHDRS {\n  text PT_LOAD;\n}\n\nSECTIONS {\n\t.text 0x00100000: {\n\t\t_ftext = . ;\n\t\tKEEP(*(.text.native_receiver_entry))\n\t\t*(.text)\n\t\t*(.text.*)\n\t\t*(.gnu.linkonce.t*)\n\t\tKEEP(*(.init))\n\t\tKEEP(*(.fini))\n\t\tQUAD(0)\n\t} :text\n\n\tPROVIDE(_etext = .);\n\tPROVIDE(etext = .);\n\n\t/* Global/static constructors and deconstructors. */\n\t.ctors ALIGN(16): {\n\t\tKEEP(*crtbegin*.o(.ctors))\n\t\tKEEP(*(EXCLUDE_FILE(*crtend*.o) .ctors))\n\t\tKEEP(*(SORT(.ctors.*)))\n\t\tKEEP(*(.ctors))\n\t}\n\t.dtors ALIGN(16): {\n\t\tKEEP(*crtbegin*.o(.dtors))\n\t\tKEEP(*(EXCLUDE_FILE(*crtend*.o) .dtors))\n\t\tKEEP(*(SORT(.dtors.*)))\n\t\tKEEP(*(.dtors))\n\t}\n\n\t.reginfo : { *(.reginfo) }\n\n\t.data ALIGN(128): {\n\t\t_fdata = . ;\n\t\t*(.data)\n\t\t*(.data.*)\n\t\t*(.gnu.linkonce.d*)\n\t\tSORT(CONSTRUCTORS)\n\t}\n\n\t/* Static data.  */\n\t.rodata ALIGN(128): {\n\t\t*(.rodata)\n\t\t*(.rodata.*)\n\t\t*(.gnu.linkonce.r*)\n\t}\n\n\t.rdata ALIGN(128): { *(.rdata) }\n\t.gcc_except_table ALIGN(128): { *(.gcc_except_table) }\n\n\t_gp = ALIGN(128) + 0x7ff0;\n\t.lit4 ALIGN(128): { *(.lit4) }\n\t.lit8 ALIGN(128): { *(.lit8) }\n\n\t.sdata ALIGN(128): {\n\t\t*(.sdata)\n\t\t*(.sdata.*)\n\t\t*(.gnu.linkonce.s*)\n\t}\n\n\t_edata = .;\n\tPROVIDE(edata = .);\n\n\t/* Uninitialized data.  */\n\t.sbss ALIGN(128) : {\n\t\t_fbss = . ;\n\t\t*(.sbss)\n\t\t*(.sbss.*)\n\t\t*(.gnu.linkonce.sb*)\n\t\t*(.scommon)\n\t}\n\n\t.bss ALIGN(128) : {\n\t\t*(.bss)\n\t\t*(.bss.*)\n\t\t*(.gnu.linkonce.b*)\n\t\t*(COMMON)\n\t}\n\t_end_bss = .;\n\n\t_end = . ;\n\tPROVIDE(end = .);\n\n\t.spad 0x70000000: {\n\t\t*(.spad)\n\t}\n\n\t/* Symbols needed by crt0.s.  */\n\tPROVIDE(_heap_size = -1);\n\tPROVIDE(_stack = -1);\n\tPROVIDE(_stack_size = 128 * 1024);\n}\n')
+endef
+export PSBBN_PREPARE
+define PSBBN_PATCH
+
+from pathlib import Path
+import hashlib,struct
+p=Path('build/release'); p.mkdir(parents=True,exist_ok=True)
+raw=(p/'native-base.bin').read_bytes()
+assert len(raw)==715272 and hashlib.sha256(raw).hexdigest()=='f0262f8bb2894547d36e30d8116f32656b9db56efffe8088587c1d986abee43a', 'Receiver differs from working v05'
+shim=(p/'english.bin').read_bytes(); assert len(shim)==92
+data=bytearray(raw); data.extend(bytes(716288-len(data)))
+struct.pack_into('<I',data,0x1246f8-0x100000,0x0c000000 | (0x1aea10>>2))
+data[0x1aea10-0x100000:0x1aea10-0x100000+92]=shim
+assert hashlib.sha256(data).hexdigest()=='dd9fd17c4f161202540d2e7dc630d2816502189cdeb9d97dee1703a3324c4ecf'
+(p/'native-patch.bin').write_bytes(data)
+print('Verified exact working v09 English receiver')
+endef
+export PSBBN_PATCH
+.PHONY: prepare release
+prepare:
+	python3 -c "$$PSBBN_PREPARE"
+
+release: prepare
+	$(MAKE) -f Makefile psbbn_mmce_combined.elf psbbn_mmce_perf.elf psbbn_native_receiver.elf
+	mkdir -p build/release
+	mips64r5900el-ps2-elf-objcopy -O binary psbbn_native_receiver.elf build/release/native-base.bin
+	mips64r5900el-ps2-elf-gcc -mabi=32 -c src/native_english_v05.S -o build/release/english.o
+	mips64r5900el-ps2-elf-ld -m elf32lr5900 -Ttext 0x1aea10 -e native_english_v05 build/release/english.o -o build/release/english.elf
+	mips64r5900el-ps2-elf-objcopy -j .text -O binary build/release/english.elf build/release/english.bin
+	python3 -c "$$PSBBN_PATCH"

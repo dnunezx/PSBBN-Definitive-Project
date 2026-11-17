@@ -1,0 +1,96 @@
+#!/bin/sh
+# Reuse only checksummed files captured from a stable default HTTP-cache view.
+LC_ALL=C
+export LC_ALL
+base=${PSBBN_TEST_ROOT:-}
+cache=$base/opt0/bn/cache
+state=$base/opt1/psbbn-cache-v03
+ready=$base/var/run/psbbn-cache-validated
+generation='@GENERATION@'
+manifest=$state/manifest
+action=$1
+valid_name() { case "$1" in ''|.|..|*[!a-zA-Z0-9._-]*) return 1;; esac; }
+entries() { printf '%s\n' "$cache/default"/* "$cache/default"/.[!.]* "$cache/default"/..?*; }
+signature() { /bin/ls -lan "$cache/default" 2>/dev/null | /usr/bin/cksum; }
+if [ -L "$cache" ] || [ -L "$cache/default" ] || [ -L "$state" ]; then exit 1; fi
+/bin/mkdir -p "$cache/default" "$state" || exit 1
+# The guest's old shell exits in `IFS= read` on an existing file. Tokenize the
+# bounded flat manifest with cat; disable wildcard expansion only for parsing.
+header=
+set -f
+if [ -f "$manifest" ] && [ ! -L "$manifest" ]; then
+    set -- $(/bin/ls -ln -- "$manifest")
+    if [ "$5" -le 16384 ] 2>/dev/null; then set -- $(/bin/cat "$manifest"); else set --; fi
+else
+    set --
+fi
+if [ "$#" -ge 2 ]; then header="$1 $2"; shift 2; fi
+set +f
+case "$action" in
+restore)
+    /bin/rm -f "$ready"
+    # Other HTTP classes retain their old per-boot cleanup policy.
+    for path in "$cache"/* "$cache"/.[!.]* "$cache"/..?*; do
+        [ -e "$path" ] || [ -L "$path" ] || continue
+        [ "$path" = "$cache/default" ] || /bin/rm -rf -- "$path"
+    done
+    if [ "$header" != "PSBBN-CACHE-v1 $generation" ]; then
+        for path in "$cache/default"/* "$cache/default"/.[!.]* "$cache/default"/..?*; do
+            [ -e "$path" ] || [ -L "$path" ] || continue
+            /bin/rm -rf -- "$path"
+        done
+        echo 'PSBBN cache: cold generation'
+        exit 0
+    fi
+    known=' '; kept=0; dropped=0; total=0
+    while [ "$#" -ge 3 ]; do
+        expected=$1; bytes=$2; name=$3; shift 3
+        valid_name "$name" || continue
+        case "$expected:$bytes" in *[!0-9:]*|:*|*:) continue;; esac
+        [ "$bytes" -le 4194304 ] 2>/dev/null || continue
+        total=$((total+bytes)); [ "$total" -le 4194304 ] || continue
+        path=$cache/default/$name
+        known="$known$name "
+        if [ -f "$path" ] && [ ! -L "$path" ]; then
+            actual=$(/usr/bin/cksum < "$path")
+            if [ "$actual" = "$expected $bytes" ]; then kept=$((kept+1)); continue; fi
+        fi
+        /bin/rm -rf -- "$path"; dropped=$((dropped+1))
+    done
+    for path in "$cache/default"/* "$cache/default"/.[!.]* "$cache/default"/..?*; do
+        [ -e "$path" ] || [ -L "$path" ] || continue
+        name=${path##*/}
+        case "$known" in *" $name "*) continue;; esac
+        /bin/rm -rf -- "$path"; dropped=$((dropped+1))
+    done
+    : > "$ready"
+    echo "PSBBN cache: preserved=$kept invalidated=$dropped"
+    ;;
+save)
+    before=$(signature)
+    [ -f "$manifest" ] && [ -f "$state/signature" ] &&
+        [ "$header" = "PSBBN-CACHE-v1 $generation" ] &&
+        [ "$(cat "$state/signature")" = "$before" ] && exit 0
+    tmp=$state/manifest.$$
+    echo "PSBBN-CACHE-v1 $generation" > "$tmp" || exit 1
+    total=0; count=0
+    for path in "$cache/default"/* "$cache/default"/.[!.]* "$cache/default"/..?*; do
+        [ -e "$path" ] || [ -L "$path" ] || continue
+        name=${path##*/}
+        valid_name "$name" && [ -f "$path" ] && [ ! -L "$path" ] || { /bin/rm -f "$tmp"; exit 1; }
+        # Bound the read before checksumming; ls's numeric fifth field is size.
+        set -- $(/bin/ls -ln -- "$path")
+        bytes=$5
+        case "$bytes" in ''|*[!0-9]*) /bin/rm -f "$tmp"; exit 1;; esac
+        total=$((total+bytes)); count=$((count+1))
+        [ "$total" -le 4194304 ] && [ "$count" -le 64 ] || { /bin/rm -f "$tmp"; exit 1; }
+        set -- $(/usr/bin/cksum < "$path")
+        [ "$2" = "$bytes" ] || { /bin/rm -f "$tmp"; exit 1; }
+        echo "$1 $2 $name" >> "$tmp"
+    done
+    [ "$(signature)" = "$before" ] || { /bin/rm -f "$tmp"; exit 1; }
+    /bin/mv -f "$tmp" "$manifest" || exit 1
+    printf '%s\n' "$before" > "$state/signature"
+    ;;
+*) exit 2;;
+esac

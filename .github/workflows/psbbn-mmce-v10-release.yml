@@ -1,0 +1,139 @@
+name: PSBBN MMCE v10 Preview Build
+
+on:
+  push:
+    branches: [release/mmce-v10-source]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: psbbn-mmce-v10-draft
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: psbbn-mmce-v10-preview
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  build-draft:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require an unpublished draft and download the validated image
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          mkdir -p release-input release-output
+          gh release download "$RELEASE_TAG" --pattern psbbn-mmce-v10-image.zip --dir release-input
+          gh release view "$RELEASE_TAG" --json body --jq .body > release-output/INSTALL.md
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,struct,hashlib
+          root=Path('experiments/psbbn-mmce'); source=Path('release-input/psbbn-mmce-v10-image.zip')
+          with zipfile.ZipFile(source) as z:
+              expected={'psbbn_boot.elf':'949beab2572a9bda2610050136831753c2e494bf0ec4789c53d10b45f205422c',
+                        'psbbn_diagnostic.elf':'a76d7dde0f4eec91a84d78667a0552c53af80de0cde7bf160ac5c11019e2996b'}
+              for name,digest in expected.items():
+                  data=z.read(name); assert hashlib.sha256(data).hexdigest()==digest
+                  Path('release-input',name).write_bytes(data)
+              with z.open('PSBBN/psbbn.img') as f:
+                  h=hashlib.sha256(); size=0
+                  while chunk:=f.read(4*1024**2): h.update(chunk); size+=len(chunk)
+              assert size==7516192768 and h.hexdigest()=='cb2af8a11fd390fbff0f874b66a669247e255e243dc89c028f4396e2c74052b0'
+              profile=z.read('PSBBN/real-checks.bin')
+              assert hashlib.sha256(profile).hexdigest()=='f3e49496a07e874fbe2380e99680d78e92cc4d279c16afac8db7b7cfce356953'
+              Path('release-input/real-checks.bin').write_bytes(profile)
+          data=Path('release-input/psbbn_boot.elf').read_bytes()
+          shoff=struct.unpack_from('<I',data,32)[0]; stride,count=struct.unpack_from('<HH',data,46)
+          sections=[struct.unpack_from('<10I',data,shoff+i*stride) for i in range(count)]
+          kernel=None
+          for section in sections:
+              if section[1]!=2: continue
+              strings=sections[section[6]]; names=data[strings[4]:strings[4]+strings[5]]
+              for at in range(section[4],section[4]+section[5],section[9]):
+                  name,address,size,info,other,target=struct.unpack_from('<IIIBBH',data,at)
+                  if target and names[name:].split(b'\0',1)[0]==b'linux_kernel':
+                      s=sections[target]; start=s[4]+address-s[3]; kernel=data[start:start+size]
+          assert kernel and kernel[:4]==b'\x7fELF'
+          (root/'build/linux').mkdir(parents=True)
+          (root/'build/linux/vmlinux').write_bytes(kernel)
+          PY
+      - name: Compile production code with the pinned SDK
+        run: |
+          set -euo pipefail
+          docker build -t psbbn-release experiments/psbbn-mmce
+          docker run --rm -v "$PWD:/repo" -v "$PWD/experiments/psbbn-mmce:/work" -e PSBBN_REPO_ROOT=/repo psbbn-release bash -c 'make -f Makefile.release release'
+      - name: Verify loaded programs and package release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,os,struct,zipfile,shutil,subprocess
+          root=Path('experiments/psbbn-mmce'); out=Path('release-output')
+          def loaded(data):
+              assert data[:7]==b'\x7fELF\x01\x01\x01'
+              entry,offset=struct.unpack_from('<II',data,24); stride,count=struct.unpack_from('<HH',data,42)
+              values=[]
+              for i in range(count):
+                  kind,at,va,pa,fs,ms,flags,align=struct.unpack_from('<8I',data,offset+i*stride)
+                  if kind==1: values.append((va,pa,ms,flags,align,data[at:at+fs]))
+              return entry,values
+          manifest={'commit':os.environ['GITHUB_SHA'],'image_sha256':'cb2af8a11fd390fbff0f874b66a669247e255e243dc89c028f4396e2c74052b0',
+                    'native_sha256':'dd9fd17c4f161202540d2e7dc630d2816502189cdeb9d97dee1703a3324c4ecf',
+                    'loaded_programs_identical':True,'hardware_gameplay_verified_by_ci':False,'launchers':{}}
+          # IRX modules contain non-loaded compiler debug sections. Require the
+          # complete loaded program, including those embedded bytes, to match.
+          for public,built in [('psbbn_boot.elf','psbbn_mmce_combined.elf'),('psbbn_diagnostic.elf','psbbn_mmce_perf.elf')]:
+              data=(root/built).read_bytes(); reference=Path('release-input',public).read_bytes()
+              assert loaded(data)==loaded(reference), 'Loaded program changed: '+public
+              (out/public).write_bytes(data)
+              manifest['launchers'][public]={'sha256':hashlib.sha256(data).hexdigest(),'image_package_sha256':hashlib.sha256(reference).hexdigest()}
+          native=(root/'build/release/native-patch.bin').read_bytes()
+          assert hashlib.sha256(native).hexdigest()==manifest['native_sha256']
+          (out/'BUILD-VERIFICATION.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          shutil.copyfile('release-input/real-checks.bin',out/'real-checks.bin')
+          with zipfile.ZipFile(out/'psbbn-mmce-v10-launchers.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for name in ('psbbn_boot.elf','psbbn_diagnostic.elf','INSTALL.md','BUILD-VERIFICATION.json'): z.write(out/name,name)
+              z.write(out/'real-checks.bin','PSBBN/real-checks.bin')
+              for p in (root/'licenses').glob('*.txt'): z.write(p,'licenses/'+p.name)
+          # Preserve the audited image ZIP; the compiled launchers above were checked
+          # against its complete loaded programs, and the native payload is exact.
+          shutil.copyfile('release-input/psbbn-mmce-v10-image.zip',out/'psbbn-mmce-v10-image.zip')
+          PY
+          curl --fail --location --retry 3 https://api.github.com/repos/CosmicScale/PSBBN-Definitive-Patch-Kernel/tarball/80b14105512ed6114c1defa8e9dee40679072874 -o release-input/kernel-source.tar.gz
+          curl --fail --location --retry 3 https://api.github.com/repos/rickgaiser/neutrino/tarball/v1.8.0 -o release-input/neutrino-source.tar.gz
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile,subprocess,hashlib
+          out=Path('release-output'); root='experiments/psbbn-mmce/'
+          files=subprocess.check_output(['git','ls-files','-z']).decode().split('\0')
+          with zipfile.ZipFile(out/'psbbn-mmce-v10-source.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
+              for name in files:
+                  if not name: continue
+                  relative=name.removeprefix(root)
+                  production=name.startswith(root) and (relative.split('/')[0] in ('src','include','iop','kernel','vendor','image','licenses') or relative in ('Makefile','Makefile.release','Dockerfile'))
+                  assets=name.startswith('scripts/assets/neutrino/') or name in ('scripts/assets/database/TitlesDB_PS2.csv','icons/art/ps2.png','icons/ico/dvd.ico')
+                  if (production or assets or name.startswith('.github/workflows/')) and Path(name).is_file() and Path(name).suffix.lower() not in ('.o','.log','.img','.md'):
+                      z.write(name,name)
+              z.write('release-input/kernel-source.tar.gz','upstream/kernel-source.tar.gz')
+              z.write('release-input/neutrino-source.tar.gz','upstream/neutrino-source.tar.gz')
+          names=('psbbn-mmce-v10-image.zip','psbbn-mmce-v10-launchers.zip','psbbn-mmce-v10-source.zip','BUILD-VERIFICATION.json')
+          lines=[]
+          for name in names:
+              h=hashlib.sha256()
+              with (out/name).open('rb') as f:
+                  while chunk:=f.read(4*1024**2): h.update(chunk)
+              lines.append(h.hexdigest()+'  '+name)
+          (out/'SHA256SUMS').write_text('\n'.join(lines)+'\n')
+          PY
+      - name: Attach assets to draft without publishing
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          gh release upload "$RELEASE_TAG" release-output/psbbn-mmce-v10-image.zip release-output/psbbn-mmce-v10-launchers.zip release-output/psbbn-mmce-v10-source.zip release-output/BUILD-VERIFICATION.json release-output/SHA256SUMS --clobber
+          gh release edit "$RELEASE_TAG" --draft --prerelease --latest=false --target "$GITHUB_SHA"

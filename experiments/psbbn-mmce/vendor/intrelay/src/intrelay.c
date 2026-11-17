@@ -40,6 +40,7 @@ typedef struct {
 static iop_sifCmdBufferIrq_t sifCmdBufferIrq __attribute__((aligned(64)));
 #endif
 
+#ifndef PSBBN_USB_HOST
 int intr_usb_handler(void *unused)
 {
 #ifndef RPC_IRQ_SUPPORT
@@ -56,6 +57,8 @@ int intr_usb_handler(void *unused)
 	
 	return 1;
 }
+
+#endif
 
 int intr_dev9_handler(void *unused)
 {
@@ -143,11 +146,13 @@ int _start(int argc, char *argv[])
 #endif
 	}
 
+#ifndef PSBBN_USB_HOST
 	if ((res = RegisterIntrHandler(IOP_IRQ_USB, 1, intr_usb_handler, NULL))) {
 		printf("intr 0x%02x, error %d\n", IOP_IRQ_USB, res);
 		locked |= 1 << IOP_IRQ_USB;
 	}
 
+#endif
 	if ((res = RegisterIntrHandler(IOP_IRQ_ILINK, 1, intr_ilink_handler, NULL))) {
 		printf("intr 0x%02x, error %d\n", IOP_IRQ_ILINK, res);
 		locked |= 1 << IOP_IRQ_ILINK;
@@ -157,9 +162,11 @@ int _start(int argc, char *argv[])
 	if (!(locked & (1 << IOP_IRQ_DEV9))) {
 		EnableIntr(IOP_IRQ_DEV9);
 	}
+#ifndef PSBBN_USB_HOST
 	if (!(locked & (1 << IOP_IRQ_USB))) {
 		EnableIntr(IOP_IRQ_USB);
 	}
+#endif
 	if (!(locked & (1 << IOP_IRQ_ILINK))) {
 		EnableIntr(IOP_IRQ_ILINK);
 	}
@@ -175,7 +182,9 @@ int _start(int argc, char *argv[])
 		return -1;
 	}
 
+#ifndef PSBBN_USB_HOST
 	initUSB();
+#endif
 
 	StartThread(res, NULL);
 	return 0;

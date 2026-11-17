@@ -18,6 +18,13 @@
 #define EF_SIO2_TRANSFER_TIMEOUT    0x00000400
 
 static int mmce_port;
+unsigned int mmce_sio2_sharing_us;
+unsigned int mmce_io_clock(void)
+{
+    iop_sys_clock_t clock;
+    GetSystemTime(&clock);
+    return clock.lo;
+}
 
 //Port ctrl settings used for all transfers
 static u32 mmce_sio2_port_ctrl1;
@@ -132,9 +139,13 @@ void mmce_sio2_deinit()
 void mmce_sio2_lock()
 {
     int state;
+    unsigned int started = mmce_io_clock(), ticks, elapsed;
 
     //Lock sio2man driver so we can use it exclusively
     sio2man_hook_sio2_lock();
+    ticks = mmce_io_clock() - started;
+    elapsed = ticks / 36864 * 1000 + ticks % 36864 * 1000 / 36864;
+    mmce_sio2_sharing_us = ~0U - mmce_sio2_sharing_us < elapsed ? ~0U : mmce_sio2_sharing_us + elapsed;
 
     sio2_save_ctrl = inl_sio2_ctrl_get();
 

@@ -17,19 +17,71 @@
 #include <fileXio_rpc.h>
 #include <io_common.h>
 #include "suite_rpc.h"
+#ifdef PSBBN_USB_BUILD
+#include "usb_fhi.h"
+#else
 #include "fhi_fileid_config.h"
+#endif
 #include "real_checks.h"
+#if defined(PSBBN_SOUND_BUILD) && !defined(PSBBN_COMBINED_BUILD)
+#define PSBBN_COMBINED_BUILD
+#endif
 
 #define MOD(n) extern unsigned char n##_irx[]; extern unsigned int size_##n##_irx
-MOD(iomanX); MOD(fileXio); MOD(sio2man); MOD(mmceman);
+MOD(iomanX); MOD(fileXio); MOD(sio2man);
+#if defined(PSBBN_COMBINED_BUILD) && !defined(PSBBN_SOUND_BUILD)
+MOD(mmceman_scan);
+#define mmceman_irx mmceman_scan_irx
+#define size_mmceman_irx size_mmceman_scan_irx
+#else
+MOD(mmceman);
+#endif
 MOD(mmcefhi); MOD(atad_emu); MOD(suite_rpc);
 MOD(bdm); MOD(bdmfs_fatfs); MOD(usbd); MOD(usbmass_bd);
+#ifdef PSBBN_USB_BUILD
+MOD(usb_fhi);
+#define STORAGE_NAME "USB"
+#define BOOT_TITLE "PSBBN USB BOOT v0.1"
+static int selected_usb_device = -1;
+#else
+#define STORAGE_NAME "MMCE"
+#ifdef PSBBN_SOUND_BUILD
+#define BOOT_TITLE "PSBBN MMCE SOUND TEST v0.1"
+#elif defined(PSBBN_COMBINED_BUILD)
+#ifdef PSBBN_FAST_BOOT
+#define BOOT_TITLE "PSBBN MMCE COMBINED v0.6 / streamlined startup"
+#else
+#define BOOT_TITLE "PSBBN MMCE COMBINED v0.3 / launch+IO v0.2"
+#endif
+#else
+#define BOOT_TITLE "PSBBN MMCE BOOT v0.6.12"
+#endif
+#endif
 #define LOAD(n) module(#n, n##_irx, size_##n##_irx)
-static char log_text[32768], saved_path[80];
+static void storage_wait(unsigned int microseconds)
+{
+#ifdef PSBBN_USB_BUILD
+    /* Poll the EE clock without scheduling a timer-alarm thread. This also
+       keeps IOP USB/RPC work progressing on emulator timer implementations. */
+    u32 start = cpu_ticks();
+    u32 ticks = (u64)microseconds * 294912 / 1000;
+    while ((u32)(cpu_ticks() - start) < ticks)
+        __asm__ __volatile__("nop");
+#else
+    usleep(microseconds);
+#endif
+}
+static char log_text[262144], saved_path[80];
 static unsigned int log_used;
 static int fxio, usb_loaded, rpc_dead;
+#if defined(PSBBN_FAST_BOOT) && !defined(PSBBN_USB_BUILD)
+static int checkpoint_slot = -1;
+#endif
 #ifdef PSBBN_BOOT_BUILD
 static int boot_read_handle_closed;
+#ifdef PSBBN_FAST_BOOT
+static unsigned int prepared_profile_crc;
+#endif
 static struct real_session_samples boot_samples;
 #endif
 static unsigned char buffer[32768 + 128] __attribute__((aligned(64)));
@@ -53,6 +105,20 @@ static void report(const char *format, ...)
     }
 }
 
+#ifdef PSBBN_FAST_BOOT
+static void log_only(const char *format, ...)
+{
+    char line[512]; va_list args; unsigned int size;
+    va_start(args, format); vsnprintf(line, sizeof(line), format, args); va_end(args);
+    size = strlen(line);
+    if (size < sizeof(log_text) - log_used) {
+        memcpy(log_text + log_used, line, size + 1); log_used += size;
+    }
+}
+#endif
+
+
+#include "perf_trace.h"
 
 static int module(const char *name, unsigned char *data, unsigned int size)
 {
@@ -83,7 +149,7 @@ static int bind_service(unsigned int id)
     for (i = 0; i < 100; ++i) {
         if (SifBindRpc(&rpc, id, 0) < 0) return 0;
         if (rpc.server) return 1;
-        usleep(50000);
+        storage_wait(50000);
     }
     report("RPC service %08x missing after 5s\n", id);
     return 0;
@@ -91,6 +157,7 @@ static int bind_service(unsigned int id)
 
 static int file_environment(void)
 {
+    if (fxio) return 1;
     if (!LOAD(iomanX) || !LOAD(fileXio) || !bind_service(FILEXIO_IRX)) return 0;
     if (fileXioInit() < 0) return 0;
     fxio = 1;
@@ -101,34 +168,60 @@ static int start_usb(void)
 {
     if (usb_loaded) return 1;
     if (!LOAD(bdm) || !LOAD(bdmfs_fatfs) || !LOAD(usbd) || !LOAD(usbmass_bd)) return 0;
-    usleep(2000000);
+    storage_wait(2000000);
     usb_loaded = 1;
+    return 1;
+}
+
+static int write_report_path(const char *path)
+{
+    unsigned int written = 0, chunk; int fd, rv, closed;
+    fd = fileXioOpen(path, FIO_O_WRONLY | FIO_O_CREAT | FIO_O_TRUNC, 0666);
+    if (fd < 0) return 0;
+    while (written < log_used) {
+        chunk = log_used - written; if (chunk > 4096) chunk = 4096;
+        rv = fileXioWrite(fd, log_text + written, chunk);
+        if (rv <= 0 || (unsigned int)rv > chunk) break;
+        written += rv;
+    }
+    closed = fileXioClose(fd);
+    if (written != log_used || closed < 0) return 0;
+    snprintf(saved_path, sizeof(saved_path), "%s", path);
     return 1;
 }
 
 static int save_report(void)
 {
-#ifdef PSBBN_BOOT_BUILD
+#if defined(PSBBN_FAST_BOOT) && !defined(PSBBN_USB_BUILD)
+    char card_path[80];
+    if (fxio && checkpoint_slot >= 0 && checkpoint_slot < 2) {
+        snprintf(card_path, sizeof(card_path), "mmce%d:/PSBBN/PSBBN-COMBINED-v06.log", checkpoint_slot);
+        if (write_report_path(card_path)) return 1;
+        report("Card checkpoint unavailable; trying USB fallback\n");
+    }
+#endif
+#ifdef PSBBN_USB_BUILD
+    char preferred[80];
+    const char *paths[] = {preferred, "mass0:/PSBBN-USB-v01.log", "mass1:/PSBBN-USB-v01.log", "mass:/PSBBN-USB-v01.log"};
+    snprintf(preferred, sizeof(preferred), "mass%d:/PSBBN-USB-v01.log",
+             selected_usb_device < 0 ? 0 : selected_usb_device);
+#elif defined(PSBBN_SOUND_BUILD)
+    static const char *paths[] = {"mass0:/PSBBN-SOUND-v01.log", "mass1:/PSBBN-SOUND-v01.log", "mass:/PSBBN-SOUND-v01.log"};
+#elif defined(PSBBN_COMBINED_BUILD)
+#if defined(PSBBN_PERF_TRACE) && !defined(PSBBN_FAST_BOOT)
+    static const char *paths[] = {"mass0:/PSBBN-MMCE-PERF-v01.log", "mass1:/PSBBN-MMCE-PERF-v01.log", "mass:/PSBBN-MMCE-PERF-v01.log"};
+#else
+    static const char *paths[] = {"mass0:/PSBBN-COMBINED-v03.log", "mass1:/PSBBN-COMBINED-v03.log", "mass:/PSBBN-COMBINED-v03.log"};
+#endif
+#elif defined(PSBBN_BOOT_BUILD)
     static const char *paths[] = {"mass0:/PSBBN-BOOT-v0612.log", "mass1:/PSBBN-BOOT-v0612.log", "mass:/PSBBN-BOOT-v0612.log"};
 #else
     static const char *paths[] = {"mass0:/PSBBN-REAL-v05.log", "mass1:/PSBBN-REAL-v05.log", "mass:/PSBBN-REAL-v05.log"};
 #endif
-    int i, fd, written, rv;
+    int i;
     if (!fxio || !start_usb()) return 0;
-    for (i = 0; i < 3; ++i) {
-        fd = fileXioOpen(paths[i], FIO_O_WRONLY | FIO_O_CREAT | FIO_O_TRUNC, 0666);
-        if (fd < 0) continue;
-        written = 0;
-        while (written < (int)log_used) {
-            rv = fileXioWrite(fd, log_text + written, log_used - written);
-            if (rv <= 0) break;
-            written += rv;
-        }
-        rv = fileXioClose(fd);
-        if (written == (int)log_used && rv >= 0) {
-            snprintf(saved_path, sizeof(saved_path), "%s", paths[i]);
-            return 1;
-        }
+    for (i = 0; i < (int)(sizeof(paths) / sizeof(paths[0])); ++i) {
+        if (write_report_path(paths[i])) return 1;
     }
     return 0;
 }
@@ -155,12 +248,12 @@ static int guards(unsigned int size)
 
 static int remote(int function, u32 lba, u32 count)
 {
-    int rv, i;
+    int rv, i, limit = (function == 10 || function == 11) ? 180000 : 10000;
     request.lba = lba; request.count = count;
     if (rpc_dead) return 0;
     rv = SifCallRpc(&rpc, function, SIF_RPC_M_NOWAIT, &request, sizeof(request), &reply, sizeof(reply), NULL, NULL);
     if (rv < 0) { report("RPC call failed: %d\n", rv); rpc_dead = 1; return 0; }
-    for (i = 0; i < 10000 && SifCheckStatRpc(&rpc); ++i) usleep(1000);
+    for (i = 0; i < limit && SifCheckStatRpc(&rpc); ++i) storage_wait(1000);
     if (SifCheckStatRpc(&rpc)) {
         report("RPC timeout: function=%d LBA=%u count=%u\n", function, lba, count);
         rpc_dead = 1;
@@ -172,7 +265,7 @@ static int remote(int function, u32 lba, u32 count)
 static struct real_checks checks __attribute__((aligned(64)));
 static const char *test_names[] = {"Host fingerprints", "7 GiB image size", "File reads >4 GiB",
     "FHI/ATA capacity", "FHI sampled reads", "ATA sampled reads", "APA partition discovery",
-    "Read-only PFS mount", "Complete osdboot.elf", "Complete vmlinux", "MMCE restored"};
+    "Read-only PFS mount", "Complete osdboot.elf", "Complete vmlinux", STORAGE_NAME " restored"};
 static int outcomes[11];
 
 static void result(int index, int pass)
@@ -193,12 +286,52 @@ static int read_exact(int fd, void *data, unsigned int size)
     return 1;
 }
 
+static void image_path(char *path, unsigned int capacity, int slot, const char *file)
+{
+#ifdef PSBBN_USB_BUILD
+    snprintf(path, capacity, "mass%d:/PSBBN/%s", slot, file);
+#else
+    snprintf(path, capacity, "mmce%d:/PSBBN/%s", slot, file);
+#endif
+}
+
+static int storage_environment(void)
+{
+#ifdef PSBBN_USB_BUILD
+    return start_usb();
+#else
+    return LOAD(sio2man) && LOAD(mmceman);
+#endif
+}
+
+#ifdef PSBBN_USB_BUILD
+static int patch_usb_settings(int slot, int writable)
+{
+    struct usb_fhi_settings *settings = NULL;
+    unsigned int i;
+    for (i = 0; i + sizeof(*settings) <= size_usb_fhi_irx; i += 4) {
+        if (*(u32 *)(usb_fhi_irx + i) == USB_FHI_MAGIC) {
+            if (settings) return 0;
+            settings = (struct usb_fhi_settings *)(usb_fhi_irx + i);
+        }
+    }
+    if (!settings || slot < 0 || slot > 9) return 0;
+    memset(settings, 0, sizeof(*settings));
+    settings->magic = USB_FHI_MAGIC;
+    settings->version = USB_FHI_VERSION;
+    settings->writable = writable;
+    settings->image_size = checks.image_size;
+    image_path(settings->path, sizeof(settings->path), slot, "psbbn.img");
+    return 1;
+}
+#endif
+
 static int read_checks(int slot)
 {
     char path[80];
     int fd, pass = 0;
     s64 size;
-    snprintf(path, sizeof(path), "mmce%d:/PSBBN/real-checks.bin", slot);
+    image_path(path, sizeof(path), slot, "real-checks.bin");
     fd = fileXioOpen(path, FIO_O_RDONLY, 0);
     if (fd < 0) return 0;
     size = fileXioLseek64(fd, 0, FIO_SEEK_END);
@@ -231,7 +364,11 @@ static int sample_reads(int fd, int function)
             }
             got = crc32(buffer + 64, bytes);
         }
+#ifdef PSBBN_FAST_BOOT
+        log_only("Sample %u/%u route=%d LBA=%u count=%u CRC=%08x\n",
+#else
         report("Sample %u/%u route=%d LBA=%u count=%u CRC=%08x\n",
+#endif
                i + 1, checks.sample_count, function, s->lba, s->count, got);
 #ifdef PSBBN_BOOT_BUILD
         if (!function) {
@@ -248,7 +385,11 @@ static int sample_reads(int fd, int function)
                 return 0;
             }
             if (got != s->crc)
+#ifdef PSBBN_FAST_BOOT
+                log_only("Live sample differs from original reference (%08x); repeated read matches.\n", s->crc);
+#else
                 report("Live sample differs from original reference (%08x); repeated read matches.\n", s->crc);
+#endif
         } else if (!real_session_matches(&boot_samples, i, got)) {
             report("Live FILEXIO reference mismatch; stopping this route\n");
             return 0;
@@ -259,18 +400,34 @@ static int sample_reads(int fd, int function)
             return 0;
         }
 #endif
+#ifdef PSBBN_FAST_BOOT
+        if ((i + 1) % 16 == 0 || i + 1 == checks.sample_count)
+            report("Image sample checks: %u/%u passed\n", i + 1, checks.sample_count);
+#endif
     }
     return 1;
+}
+
+static int checkpoint_environment(int slot, int reuse)
+{
+    if (!reuse) {
+        reset_iop();
+        if (!file_environment() || !storage_environment()) return 0;
+    }
+    return slot >= 0 && read_checks(slot);
 }
 
 static int prepare_image(int slot)
 {
     char path[80];
-    int fd, id, pass;
+    int fd, pass;
+#if !defined(PSBBN_USB_BUILD) && !defined(PSBBN_FAST_BOOT)
+    int id;
     unsigned int i;
-    s64 size;
     struct fhi_fileid *settings = NULL;
-    snprintf(path, sizeof(path), "mmce%d:/PSBBN/psbbn.img", slot);
+#endif
+    s64 size;
+    image_path(path, sizeof(path), slot, "psbbn.img");
     fd = fileXioOpen(path, FIO_O_RDONLY, 0);
     report("Image %s: fd=%d\n", path, fd);
     if (fd < 0) return 0;
@@ -285,6 +442,16 @@ static int prepare_image(int slot)
     pass = sample_reads(fd, 0);
     result(2, pass);
     if (!pass) { fileXioClose(fd); return 0; }
+#ifdef PSBBN_FAST_BOOT
+    /* The final writable bridge independently rereads every learned sample.
+     * Keep repeated FILEXIO references, but no persistent diagnostic handle. */
+    prepared_profile_crc = checks.body_crc;
+    boot_read_handle_closed = fileXioClose(fd) >= 0;
+    return boot_read_handle_closed;
+#elif defined(PSBBN_USB_BUILD)
+    if (fileXioClose(fd) < 0) return 0;
+    return patch_usb_settings(slot, 0);
+#else
     for (i = 0; i + sizeof(*settings) <= size_mmcefhi_irx; i += 4) {
         if (*(u32 *)(mmcefhi_irx + i) == MODULE_SETTINGS_MAGIC) {
             if (settings) { fileXioClose(fd); return 0; }
@@ -300,8 +467,10 @@ static int prepare_image(int slot)
     settings->file[FHI_FID_ATA0].id = id;
     settings->file[FHI_FID_ATA0].size = size;
     return 1; /* The remote handle deliberately stays open across reset. */
+#endif
 }
 
+#ifndef PSBBN_FAST_BOOT
 static int partition_discovery(void)
 {
     iox_dirent_t entry;
@@ -321,6 +490,7 @@ static int partition_discovery(void)
     fileXioDclose(fd);
     return rv == 0 && count > 0 && count < 64 && system && linux1 && linux9;
 }
+#endif
 
 static int check_boot_file(int index, const char *path)
 {
@@ -346,13 +516,19 @@ static int check_boot_file(int index, const char *path)
     return pass && ~crc == expected->crc;
 }
 
+#ifndef PSBBN_FAST_BOOT
 static void virtual_tests(void)
 {
     int pass, rv;
     report("Checkpoint: resetting into read-only virtual ATA\n");
     save_report();
     reset_iop();
+#ifdef PSBBN_USB_BUILD
+    if (!file_environment() || !start_usb() || !LOAD(usb_fhi) ||
+        !LOAD(atad_ro) || !LOAD(suite_rpc) || !bind_service(SUITE_RPC_ID)) {
+#else
     if (!LOAD(sio2man) || !LOAD(mmcefhi) || !LOAD(atad_ro) || !LOAD(suite_rpc) || !bind_service(SUITE_RPC_ID)) {
+#endif
         result(3, 0); return;
     }
     pass = remote(3, 0, 0) && reply.fhi_sectors == REAL_SECTORS && reply.sectors == REAL_SECTORS &&
@@ -387,35 +563,113 @@ static void virtual_tests(void)
 #endif
     save_report();
 }
+#endif
+
+#ifdef PSBBN_FAST_BOOT
+static int fast_boot_ready(void)
+{
+    return outcomes[0] == 1 && outcomes[1] == 1 && outcomes[2] == 1 && outcomes[10] == 1 &&
+           boot_read_handle_closed && !rpc_dead && prepared_profile_crc == checks.body_crc;
+}
+#endif
 
 #ifdef PSBBN_BOOT_BUILD
+#if defined(PSBBN_COMBINED_BUILD) && !defined(PSBBN_EMULATOR_BUILD)
+#include "mmce_scan.h"
+#include "collection_sync.h"
+#endif
 #include "boot_launch.h"
 #endif
 
 int main(int argc, char **argv)
 {
     int slot, selected = -1, ready = 0, i, saved;
+    uint64_t stage;
     (void)argc; (void)argv;
     init_scr(); _ps2sdk_init_timer(); SifInitRpc(0);
+    perf_init("mmce_boot");
+#ifdef PSBBN_PERF_TRACE
+    report("PSBBN MMCE PERFORMANCE v0.3 - ownership snapshot r1; sorted inventory lookup\n");
+#endif
 #ifdef PSBBN_BOOT_BUILD
-    report("PSBBN MMCE BOOT EXPERIMENT v0.6.12\nSound disabled; visible early handoff diagnostics enabled.\nRepeated live reads first; Linux boot enables image writes.\n");
+#ifdef PSBBN_SOUND_BUILD
+    report(BOOT_TITLE "\nSound enabled; visible early handoff diagnostics enabled.\nRepeated live reads first; Linux boot enables image writes.\n");
+#else
+    report(BOOT_TITLE "\nSound disabled; visible early handoff diagnostics enabled.\nRepeated live reads first; Linux boot enables image writes.\n");
+#endif
 #else
     report("PSBBN REAL-IMAGE PREFLIGHT v0.5\nRead-only image; USB checkpoint log writes only.\n");
 #endif
+    stage = perf_begin("initial_environment");
     reset_iop();
-    if (file_environment() && LOAD(sio2man) && LOAD(mmceman)) {
+    if (file_environment() && storage_environment()) {
+#ifdef PSBBN_USB_BUILD
+        int attempt;
+        report("Searching USB for PSBBN/real-checks.bin (up to 10 seconds)...\n");
+        for (attempt = 0; attempt < 100 && selected < 0; ++attempt) {
+            for (slot = 0; slot < 10; ++slot) {
+                if (read_checks(slot)) { selected = slot; selected_usb_device = slot; break; }
+            }
+            if (selected < 0) storage_wait(100000);
+        }
+        if (selected < 0)
+            report("No valid USB PSBBN/real-checks.bin found. Copy the full PSBBN folder to the exFAT USB drive.\n");
+#else
         for (slot = 0; slot < 2; ++slot) {
             if (read_checks(slot)) { selected = slot; break; }
         }
+#endif
         result(0, selected >= 0);
+#if defined(PSBBN_FAST_BOOT) && !defined(PSBBN_USB_BUILD)
+        checkpoint_slot = selected;
+#endif
+        perf_end("initial_environment", stage, selected >= 0);
         save_report();
-        if (selected >= 0) ready = prepare_image(selected);
-        if (ready) virtual_tests();
-    }
+        if (selected >= 0) {
+#if defined(PSBBN_COMBINED_BUILD) && !defined(PSBBN_EMULATOR_BUILD)
+            int sync_ok;
+            stage = perf_begin("scan");
+            scan_mmce_games(selected);
+            perf_end("scan", stage, scan_is_complete);
+            stage = perf_begin("collection_sync");
+            sync_ok = sync_collection(selected, scan_is_complete);
+            perf_end("collection_sync", stage, sync_ok);
+            if (!sync_ok) {
+                report("Collection recovery/commit failed; Linux will not start\n"); save_report();
+                for (;;) storage_wait(1000000);
+            }
+            stage = perf_begin("restore_and_image_preflight");
+            reset_iop(); rpc_dead = 0;
+            if (!file_environment() || !storage_environment() || !read_checks(selected)) {
+                report("Cannot restore storage after collection sync\n");
+            } else ready = prepare_image(selected);
+            perf_end("restore_and_image_preflight", stage, ready);
+#else
+            ready = prepare_image(selected);
+#endif
+        }
+        if (ready) {
+#ifdef PSBBN_FAST_BOOT
+            report("Normal boot: repeated FILEXIO references retained; full diagnostic route/file tests omitted.\n");
+            report("Every sample will be checked again through the final writable boot bridge.\n");
+#else
+            stage = perf_begin("virtual_storage_preflight");
+            virtual_tests();
+            for (i = 0; i < 10 && outcomes[i] == 1; ++i) {}
+            perf_end("virtual_storage_preflight", stage, i == 10);
+#endif
+        }
+    } else perf_end("initial_environment", stage, 0);
     /* Recover USB logging even after a timed-out diagnostic RPC. */
-    reset_iop();
-    if (file_environment() && LOAD(sio2man) && LOAD(mmceman) && selected >= 0)
-        result(10, read_checks(selected));
+    stage = perf_begin("checkpoint_environment");
+#ifdef PSBBN_FAST_BOOT
+    /* The read-only handle is closed; retain the live filesystem environment
+     * for its checkpoint. A failed preparation never proceeds to Linux. */
+    result(10, checkpoint_environment(selected, ready && boot_read_handle_closed && !rpc_dead));
+#else
+    result(10, checkpoint_environment(selected, 0));
+#endif
+    perf_end("checkpoint_environment", stage, outcomes[10] == 1);
     report("\nRESULTS\n");
     for (i = 0; i < 11; ++i)
         report("%s: %s\n", test_names[i], outcomes[i] > 0 ? "PASS" : outcomes[i] < 0 ? "FAIL" : "SKIPPED");
@@ -426,17 +680,30 @@ int main(int argc, char **argv)
     saved = save_report();
     scr_clear(); scr_setXY(0, 0);
 #ifdef PSBBN_BOOT_BUILD
-    scr_printf("PSBBN MMCE BOOT v0.6.12 - PREFLIGHT FINISHED\n\n");
+    scr_printf(BOOT_TITLE " - PREFLIGHT FINISHED\n\n");
 #else
     scr_printf("PSBBN REAL-IMAGE PREFLIGHT v0.5 - FINISHED\n\n");
 #endif
-    for (i = 0; i < 11; ++i)
-        scr_printf("%-27s %s\n", test_names[i], outcomes[i] > 0 ? "PASS" : outcomes[i] < 0 ? "FAIL" : "SKIPPED");
-    scr_printf("\nUSB report: %s\n", saved ? saved_path : "unavailable (photograph results)");
+#ifdef PSBBN_FAST_BOOT
+    if (fast_boot_ready() && saved) scr_printf("Image checks passed. Starting PSBBN.\n");
+    else
+#endif
+    {
+        for (i = 0; i < 11; ++i)
+            scr_printf("%-27s %s\n", test_names[i], outcomes[i] > 0 ? "PASS" : outcomes[i] < 0 ? "FAIL" : "SKIPPED");
+    }
+    scr_printf("\nCheckpoint report: %s\n", saved ? saved_path : "unavailable (photograph results)");
 #ifdef PSBBN_BOOT_BUILD
+#ifdef PSBBN_FAST_BOOT
+    if (fast_boot_ready() && saved) {
+#else
     for (i = 0; i < 11; ++i) if (outcomes[i] != 1) break;
-    if (i == 11 && saved && boot_read_handle_closed) launch_psbbn(selected);
-    else report("Boot stopped: preflight, handle cleanup and USB checkpoint must pass.\n");
+    if (i == 11 && saved && boot_read_handle_closed) {
+#endif
+        if (saved) launch_psbbn(selected);
+        else report("Boot stopped: game-scan checkpoint could not be saved\n");
+    }
+    else report("Boot stopped: preflight, handle cleanup and checkpoint must pass.\n");
     report("Linux was not entered. Power off to exit.\n");
     if (fxio) save_report();
 #else

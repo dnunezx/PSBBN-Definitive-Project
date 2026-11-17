@@ -91,6 +91,10 @@ int mmcedrv_read_sector(int fd, u32 sector, u32 count, void *buffer)
     u8 wrbuf[0xB];
     u8 rdbuf[0xB];
 
+    if (fd < 0 || fd >= 250 || !buffer || !count || sector >= 0x1000000 ||
+        count >= 0x1000000 || count > 0x1000000 - sector || count > 0x7fffffffU / 2048)
+        return -1;
+
     DPRINTF("%s fd: %i, starting sector: %i, count: %i\n", __func__, fd, sector, count);
 
     wrbuf[0x0] = MMCE_ID;                   //Identifier
@@ -152,7 +156,7 @@ int mmcedrv_read_sector(int fd, u32 sector, u32 count, void *buffer)
     sectors_read |= rdbuf[0x2] << 8;
     sectors_read |= rdbuf[0x3];
 
-    if (sectors_read != count) {
+    if (sectors_read != (int)count) {
         DPRINTF("%s ERROR: Sectors read: %i, expected: %i\n", __func__, sectors_read, count);
     }
 
@@ -481,7 +485,8 @@ int __start(int argc, char *argv[])
 
     mmce_sio2_set_port(fhi.devNr + 2);
     mmce_sio2_update_ack_wait_cycles(0);
-    mmce_sio2_set_use_alarm(0);
+    /* Keep bounded transfer waits even when a card stops acknowledging. */
+    mmce_sio2_set_use_alarm(1);
 #endif
 
     iop_library_t * lib_modload = ioplib_getByName("modload");

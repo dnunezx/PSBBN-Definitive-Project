@@ -4,7 +4,7 @@ IOP_OBJS = sdd_main.o sdd_com.o sdd_cb.o imports.o exports.o
 IOP_SRC_DIR = src/
 IOP_INC_DIR = src/
 IOP_OBJS_DIR = ../../build/sdrdrv/
-IOP_CFLAGS = -DSDRDRV_OBSOLETE_FUNCS=1 -DSDRDRV_EECB_COMPAT=1
+IOP_CFLAGS = -DSDRDRV_OBSOLETE_FUNCS=1 -DSDRDRV_EECB_COMPAT=1 -DPSBBN_QUIET_START=1
 .DEFAULT_GOAL := all
 all: $(IOP_BIN)
 include $(PS2SDK)/Defs.make

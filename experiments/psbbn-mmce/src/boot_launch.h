@@ -4,7 +4,18 @@
 #include "boot_elf.h"
 #include "block_rpc.h"
 #include "boot_trace.h"
-MOD(atad_checked); MOD(block_rpc); MOD(intrelay);
+#include "perf_trace.h"
+#include "native_console.h"
+MOD(atad_checked); MOD(block_rpc);
+#ifdef PSBBN_SOUND_BUILD
+MOD(libsd); MOD(sdrdrv);
+#include "sound_start.h"
+#endif
+#ifdef PSBBN_USB_BUILD
+MOD(intrelay_usb);
+#else
+MOD(intrelay);
+#endif
 MOD(linux_mcman); MOD(linux_mcserv); MOD(linux_padman);
 extern unsigned char linux_kernel[], linux_sbios[];
 extern unsigned int size_linux_kernel, size_linux_sbios;
@@ -75,7 +86,7 @@ static int block_call(int function, unsigned int lba, unsigned int count)
     for (i = 0; i < 100000000 && SifCheckStatRpc(&rpc); ++i)
         __asm__ __volatile__("nop");
 #else
-    for (i = 0; i < 10000 && SifCheckStatRpc(&rpc); ++i) usleep(1000);
+    for (i = 0; i < 10000 && SifCheckStatRpc(&rpc); ++i) storage_wait(1000);
 #endif
     if (SifCheckStatRpc(&rpc)) { report("Block RPC timeout\n"); return 0; }
     return block_rx.magic == PSBBN_BLOCK_MAGIC && block_rx.version == PSBBN_BLOCK_VERSION &&
@@ -86,6 +97,17 @@ static int block_call(int function, unsigned int lba, unsigned int count)
 #ifndef PSBBN_EMULATOR_BUILD
 static int patch_boot_handle(int slot)
 {
+#ifdef PSBBN_USB_BUILD
+    char path[80];
+    int fd, pass;
+    image_path(path, sizeof(path), slot, "psbbn.img");
+    fd = fileXioOpen(path, FIO_O_RDWR, 0);
+    report("USB boot image open read/write: %s -> %d\n", path, fd);
+    if (fd < 0) return 0;
+    pass = fileXioLseek64(fd, 0, FIO_SEEK_END) == (s64)checks.image_size;
+    if (fileXioClose(fd) < 0) pass = 0;
+    return pass && patch_usb_settings(slot, 1);
+#else
     struct fhi_fileid *settings = NULL;
     char path[80];
     unsigned int i;
@@ -108,6 +130,7 @@ static int patch_boot_handle(int slot)
     settings->magic = MODULE_SETTINGS_MAGIC; settings->devNr = slot;
     settings->file[FHI_FID_ATA0].id = id; settings->file[FHI_FID_ATA0].size = checks.image_size;
     return 1;
+#endif
 }
 #endif
 
@@ -175,8 +198,9 @@ static void launch_psbbn(int slot)
 #else
     if (!patch_boot_handle(slot)) { report("Cannot prepare writable boot image\n"); return; }
     report("Checkpoint: final IOP reset, storage bridge and Linux handoff next.\n");
-    report("Linux will have read/write access to the MMCE image.\n");
-    if (!save_report()) { report("USB checkpoint unavailable; stopping before boot\n"); return; }
+    report("Linux will have read/write access to the " STORAGE_NAME " image.\n");
+    perf_checkpoint("pre_final_iop_reset");
+    if (!save_report()) { report("Checkpoint unavailable; stopping before boot\n"); return; }
 #endif
     reset_iop();
     scr_clear(); scr_setXY(0, 0);
@@ -185,9 +209,23 @@ static void launch_psbbn(int slot)
     if (!LOAD(sio2man) || !LOAD(linux_mcman) || !LOAD(linux_mcserv) || !LOAD(linux_padman) ||
         !LOAD(native_dev9) || !LOAD(native_atad)) pass = 0;
 #else
-    report("PSBBN MMCE BOOT v0.6.12 - LINUX STARTUP\nSound disabled for this recovery test.\n");
+#ifdef PSBBN_SOUND_BUILD
+    report(BOOT_TITLE " - LINUX STARTUP\nSound-enabled MMCE test.\n");
+#else
+    report(BOOT_TITLE " - LINUX STARTUP\nSound disabled for this recovery test.\n");
+#endif
+#ifdef PSBBN_USB_BUILD
+    if (!LOAD(sio2man) || !LOAD(linux_mcman) || !LOAD(linux_mcserv) || !LOAD(linux_padman) ||
+        !LOAD(iomanX) || !start_usb() || !LOAD(usb_fhi) || !LOAD(atad_checked)) pass = 0;
+#else
     if (!LOAD(sio2man) || !LOAD(linux_mcman) || !LOAD(linux_mcserv) || !LOAD(linux_padman) ||
         !LOAD(mmcefhi) || !LOAD(atad_checked)) pass = 0;
+#endif
+#endif
+#ifdef PSBBN_SOUND_BUILD
+    report("Sound startup recovery build r2\n");
+    if (pass && (!sound_start_module("libsd", libsd_irx, size_libsd_irx) ||
+                 !sound_start_module("sdrdrv", sdrdrv_irx, size_sdrdrv_irx))) pass = 0;
 #endif
     if (pass) {
         rv = -1;
@@ -196,6 +234,9 @@ static void launch_psbbn(int slot)
         report("Block service write-enabled: id=%d start=%d\n", i, rv);
         pass = i >= 0 && rv == 0 && bind_service(PSBBN_BLOCK_RPC_ID);
     }
+#ifdef PSBBN_USB_BUILD
+    if (pass && !LOAD(intrelay_usb)) pass = 0;
+#endif
     if (pass) {
         report("Checking writable storage bridge capacity...\n");
         pass = block_call(PSBBN_BLOCK_INFO, 0, 0) && (block_rx.flags & PSBBN_BLOCK_WRITABLE);
@@ -217,18 +258,28 @@ static void launch_psbbn(int slot)
         reset_iop(); if (file_environment()) save_report();
         return;
     }
+#ifndef PSBBN_USB_BUILD
     /* USB belongs to Linux after this point; do not load an IOP USB driver. */
     if (!LOAD(intrelay)) {
         report("Interrupt relay failed; Linux not started\n");
         reset_iop(); if (file_environment()) save_report();
         return;
     }
+#endif
     memset(&boot_page, 0, sizeof(boot_page));
     boot_page.info.magic = 0x50324c42; boot_page.info.size = sizeof(boot_page.info);
     boot_page.info.sbios = 0x80001000; boot_page.info.maxmem = 32 * 1024 * 1024 - 4096;
     boot_page.info.command = 0x81fff000U + offsetof(struct boot_page, command);
+#if defined(PSBBN_FAST_BOOT) || defined(PSBBN_QUIET_BOOT)
+    snprintf(boot_page.command, sizeof(boot_page.command), "root=/dev/hda1 rw console=tty0 graphics quiet");
+#else
     snprintf(boot_page.command, sizeof(boot_page.command), "root=/dev/hda1 rw console=tty0 graphics");
+#endif
     GetOsdConfigParam(&osd);
+    /* Linux may update its sysconf copy. Retain the exact original OSD word in
+     * otherwise unused bootinfo words, outside Linux's advertised RAM. */
+    boot_page.info.reserved[0] = osd;
+    boot_page.info.reserved[1] = osd ^ NATIVE_CONSOLE_MARKER;
     boot_page.info.sysconf.spdif = osd & 1; boot_page.info.sysconf.aspect = (osd >> 1) & 3;
     boot_page.info.sysconf.video = (osd >> 3) & 1; boot_page.info.sysconf.language = (osd >> 16) & 31;
     boot_page.info.sysconf.timezone = (osd >> 21) & 0x7ff;
@@ -240,13 +291,13 @@ static void launch_psbbn(int slot)
 #ifdef PSBBN_EMULATOR_BUILD
     report("PSBBN PCSX2 TEST - HANDOFF\n");
 #else
-    report("PSBBN MMCE BOOT v0.6.12 - HANDOFF\n");
+    report(BOOT_TITLE " - HANDOFF\n");
 #endif
     report("Bridge samples passed. Starting Linux at %08x\n", ((struct boot_elf_header *)linux_kernel)->entry);
 #ifdef PSBBN_EMULATOR_BUILD
     scr_printf("Linux log is readable through the background debugger.\n");
 #else
-    scr_printf("USB checkpoint saved. Photograph any Linux error shown next.\n");
+    scr_printf("Checkpoint saved. Photograph any Linux error shown next.\n");
 #endif
     report("T0 Checking early screen output\n");
     interrupts = DIntr(); ee_kmode_enter();

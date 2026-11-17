@@ -15,14 +15,20 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/proc_fs.h>
+#include <linux/kernel_stat.h>
+#include <linux/time.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
+#include <asm/io.h>
 #include <asm/ps2/sifdefs.h>
 #include "block_rpc.h"
 
 #define MMCE_MAJOR 3
 #define MMCE_MINORS 64
 #define RPC_TIMEOUT (10 * HZ)
+/* Keep the queued direction separate from BH_Dirty and JBD's private bits. */
+#define BH_MMCE_WRITE (BH_PrivateStart + 16)
 static ps2sif_clientdata_t client __attribute__((aligned(64)));
 static struct psbbn_block_packet tx __attribute__((aligned(64)));
 static struct psbbn_block_packet rx __attribute__((aligned(64)));
@@ -35,7 +41,37 @@ static int sizes[MMCE_MINORS], blocksizes[MMCE_MINORS], sectorsizes[MMCE_MINORS]
 static struct gendisk disk;
 static spinlock_t pending_lock = SPIN_LOCK_UNLOCKED;
 static struct buffer_head *pending_head, *pending_tail;
-static DECLARE_MUTEX_LOCKED(pending_work);
+static DECLARE_WAIT_QUEUE_HEAD(pending_work);
+static unsigned long read_requests, write_requests, read_sectors, write_sectors;
+static unsigned long rpc_retries, rpc_errors, rpc_us, rpc_max_us, flush_us;
+static unsigned long range_flushes, full_flushes, request_bins[7];
+static unsigned int card_stats[7];
+
+static unsigned long clock_us(void)
+{
+    struct timeval tv;
+    do_gettimeofday(&tv);
+    return (unsigned long)tv.tv_sec * 1000000UL + tv.tv_usec;
+}
+
+static int io_report(char *page, char **start, off_t off, int count, int *eof, void *data)
+{
+    int size;
+    (void)start; (void)data;
+    if (off) return 0;
+    size = sprintf(page, "psbbn_mmce_io_v1\nread_requests=%lu write_requests=%lu read_sectors=%lu write_sectors=%lu\n"
+        "rpc_us=%lu rpc_max_us=%lu retries=%lu errors=%lu flush_us=%lu range_flushes=%lu full_flushes=%lu\n"
+        "sizes_sectors_1_2_4_8_16_32_64=%lu,%lu,%lu,%lu,%lu,%lu,%lu\n"
+        "card_stats_available=%u card_read_us=%u card_max_read_us=%u sharing_wait_us=%u combined_reads=%u legacy_reads=%u cache_hits=%u card_errors=%u\n"
+        "swap_in_pages=%u swap_out_pages=%u\n",
+        read_requests, write_requests, read_sectors, write_sectors, rpc_us, rpc_max_us, rpc_retries,
+        rpc_errors, flush_us, range_flushes, full_flushes,
+        request_bins[0], request_bins[1], request_bins[2], request_bins[3], request_bins[4], request_bins[5], request_bins[6],
+        (capabilities & PSBBN_BLOCK_IO_STATS) != 0, card_stats[0], card_stats[1], card_stats[2],
+        card_stats[3], card_stats[4], card_stats[5], card_stats[6], kstat.pswpin, kstat.pswpout);
+    *eof = 1;
+    return size < count ? size : count;
+}
 
 static void rpc_callback(void *unused)
 {
@@ -64,11 +100,29 @@ static int rpc_wait_done(void)
     return 0;
 }
 
-static int rpc_send(int function, unsigned int lba, unsigned int count, void *buffer)
+static void copy_payload(struct buffer_head *bh, unsigned int offset,
+                         unsigned int bytes, unsigned char *payload, int write)
+{
+    while (bytes) {
+        unsigned int length = bh->b_size - offset;
+        if (length > bytes) length = bytes;
+        if (write) memcpy(payload, bh->b_data + offset, length);
+        else memcpy(bh->b_data + offset, payload, length);
+        payload += length;
+        bytes -= length;
+        bh = bh->b_reqnext;
+        offset = 0;
+    }
+}
+
+static int rpc_send(int function, unsigned int lba, unsigned int count,
+                    struct buffer_head *bh, unsigned int offset)
 {
     int rv, send_size = 64, receive_size = 64;
     unsigned int bytes = count * 512;
     unsigned long deadline = jiffies + RPC_TIMEOUT;
+    unsigned long began, flushed, elapsed;
+    unsigned int bin;
     if (rpc_dead) return -EIO;
     memset(&tx, 0, 64);
     tx.magic = PSBBN_BLOCK_MAGIC;
@@ -79,27 +133,49 @@ static int rpc_send(int function, unsigned int lba, unsigned int count, void *bu
     tx.bytes = bytes;
     if (function == PSBBN_BLOCK_READ) receive_size += bytes;
     if (function == PSBBN_BLOCK_WRITE) {
-        memcpy(tx.data, buffer, bytes);
+        copy_payload(bh, offset, bytes, tx.data, 1);
         send_size += bytes;
     }
     memset(&rx, 0, receive_size);
     rpc_done = 0;
-    flush_cache_all();
+    began = clock_us();
+    /* These two DMA buffers are cache-line aligned and exclusively owned until
+     * callback. Keep whole-cache maintenance for transfers >= R5900's 8 KiB
+     * D-cache; smaller requests need only writeback/invalidate of their ranges. */
+    if (send_size >= 8192 || receive_size >= 8192) { flush_cache_all(); ++full_flushes; }
+    else {
+        dma_cache_wback_inv((unsigned long)&tx, send_size);
+        dma_cache_wback_inv((unsigned long)&rx, receive_size);
+        ++range_flushes;
+    }
+    flushed = clock_us();
+    flush_us += flushed - began;
+    if (function == PSBBN_BLOCK_READ || function == PSBBN_BLOCK_WRITE) {
+        for (bin = 0; bin < 6 && count > (1U << bin); ++bin) {}
+        ++request_bins[bin];
+        if (function == PSBBN_BLOCK_READ) { ++read_requests; read_sectors += count; }
+        else { ++write_requests; write_sectors += count; }
+    }
     do {
         rv = ps2sif_callrpc(&client, function, SIF_RPCM_NOWAIT,
             &tx, send_size, &rx, receive_size, rpc_callback, NULL);
         if (rv != -SIF_RPCE_SENDP) break;
+        ++rpc_retries;
         set_current_state(TASK_UNINTERRUPTIBLE);
         schedule_timeout(1);
     } while (time_before(jiffies, deadline));
-    if (rv < 0) { rpc_dead = 1; return -EIO; }
-    if (rpc_wait_done()) return -EIO;
+    if (rv < 0) { rpc_dead = 1; ++rpc_errors; return -EIO; }
+    if (rpc_wait_done()) { ++rpc_errors; return -EIO; }
+    elapsed = clock_us() - flushed;
+    rpc_us += elapsed;
+    if (elapsed > rpc_max_us) rpc_max_us = elapsed;
     if (rx.magic != PSBBN_BLOCK_MAGIC || rx.version != PSBBN_BLOCK_VERSION ||
         rx.sequence != tx.sequence || rx.lba != lba || rx.count != count ||
         (capacity && rx.capacity != capacity)) { rpc_dead = 1; return -EIO; }
-    if (rx.result) return rx.result < 0 ? rx.result : -EIO;
+    if (rx.flags & PSBBN_BLOCK_IO_STATS) memcpy(card_stats, rx.reserved, sizeof(card_stats));
+    if (rx.result) { ++rpc_errors; return rx.result < 0 ? rx.result : -EIO; }
     if (rx.bytes != bytes) { rpc_dead = 1; return -EIO; }
-    if (function == PSBBN_BLOCK_READ) memcpy(buffer, rx.data, bytes);
+    if (function == PSBBN_BLOCK_READ) copy_payload(bh, offset, bytes, rx.data, 0);
     return 0;
 }
 
@@ -122,19 +198,59 @@ static int bridge_bind(void)
     return -ENODEV;
 }
 
-static int transfer_bh(struct buffer_head *bh)
+static unsigned int buffer_sectors(const struct buffer_head *bh)
 {
-    unsigned int done = 0, count, total = bh->b_size / 512;
+    unsigned int count = bh->b_size / 512;
     unsigned long lba = bh->b_rsector;
-    int write = test_and_clear_bit(BH_Dirty, &bh->b_state), rv;
-    if (MINOR(bh->b_rdev) != 0 || !total || bh->b_size % 512 ||
-        lba >= capacity || total > capacity - lba) return -EINVAL;
+
+    if (MINOR(bh->b_rdev) != 0 || bh->b_size % 512 ||
+        lba >= capacity || count > capacity - lba) return 0;
+    return count;
+}
+
+static struct buffer_head *take_batch(unsigned int *sectors, int *write)
+{
+    struct buffer_head *first, *last, *next;
+    unsigned int count;
+    unsigned long flags;
+
+    wait_event(pending_work, pending_head != NULL);
+    spin_lock_irqsave(&pending_lock, flags);
+    first = last = pending_head;
+    *sectors = buffer_sectors(first);
+    *write = test_bit(BH_MMCE_WRITE, &first->b_state);
+
+    /* Keep FIFO order and take only adjacent buffers already in the queue. */
+    while (*sectors && *sectors < PSBBN_BLOCK_MAX_SECTORS &&
+           (next = last->b_reqnext) != NULL &&
+           next->b_rdev == first->b_rdev &&
+           next->b_rsector == first->b_rsector + *sectors &&
+           test_bit(BH_MMCE_WRITE, &next->b_state) == *write) {
+        count = buffer_sectors(next);
+        if (!count || count > PSBBN_BLOCK_MAX_SECTORS - *sectors) break;
+        *sectors += count;
+        last = next;
+    }
+    pending_head = last->b_reqnext;
+    if (!pending_head) pending_tail = NULL;
+    last->b_reqnext = NULL;
+    spin_unlock_irqrestore(&pending_lock, flags);
+    return first;
+}
+
+static int transfer_batch(struct buffer_head *bh, unsigned int total, int write)
+{
+    unsigned int done = 0, count;
+    int rv;
+
+    if (!total) return -EINVAL;
     if (write && !(capabilities & PSBBN_BLOCK_WRITABLE)) return -EROFS;
+    /* Only a single oversized buffer can require more than one RPC. */
     while (done < total) {
         count = total - done;
         if (count > PSBBN_BLOCK_MAX_SECTORS) count = PSBBN_BLOCK_MAX_SECTORS;
         rv = rpc_send(write ? PSBBN_BLOCK_WRITE : PSBBN_BLOCK_READ,
-                      lba + done, count, bh->b_data + done * 512);
+                      bh->b_rsector + done, count, bh, done * 512);
         if (rv) return rv;
         done += count;
     }
@@ -143,9 +259,9 @@ static int transfer_bh(struct buffer_head *bh)
 
 static int block_worker(void *unused)
 {
-    struct buffer_head *bh;
-    unsigned long flags;
-    int rv;
+    struct buffer_head *bh, *next;
+    unsigned int sectors;
+    int rv, write;
     (void)unused;
     daemonize();
     exit_files(current);
@@ -156,19 +272,16 @@ static int block_worker(void *unused)
     spin_unlock_irq(&current->sigmask_lock);
     current->flags |= PF_NOIO;
     for (;;) {
-        down(&pending_work);
-        spin_lock_irqsave(&pending_lock, flags);
-        bh = pending_head;
-        if (bh) {
-            pending_head = bh->b_reqnext;
-            if (!pending_head) pending_tail = NULL;
+        bh = take_batch(&sectors, &write);
+        rv = transfer_batch(bh, sectors, write);
+        if (rv) printk(KERN_ERR "psbbn-mmce: LBA=%lu sectors=%u failed=%d\n", bh->b_rsector, sectors, rv);
+        while (bh) {
+            next = bh->b_reqnext;
             bh->b_reqnext = NULL;
+            clear_bit(BH_MMCE_WRITE, &bh->b_state);
+            bh->b_end_io(bh, rv == 0);
+            bh = next;
         }
-        spin_unlock_irqrestore(&pending_lock, flags);
-        if (!bh) continue;
-        rv = transfer_bh(bh);
-        if (rv) printk(KERN_ERR "psbbn-mmce: LBA=%lu bytes=%u failed=%d\n", bh->b_rsector, bh->b_size, rv);
-        bh->b_end_io(bh, rv == 0);
     }
     return 0;
 }
@@ -176,20 +289,22 @@ static int block_worker(void *unused)
 static int make_request(request_queue_t *q, int rw, struct buffer_head *bh)
 {
     unsigned long flags;
+    int wake;
     (void)q;
     if ((rw != READ && rw != READA && rw != WRITE) || rpc_dead) {
         buffer_IO_error(bh);
         return 0;
     }
-    if (rw == WRITE) set_bit(BH_Dirty, &bh->b_state);
-    else clear_bit(BH_Dirty, &bh->b_state);
+    if (rw == WRITE) set_bit(BH_MMCE_WRITE, &bh->b_state);
+    else clear_bit(BH_MMCE_WRITE, &bh->b_state);
     bh->b_reqnext = NULL;
     spin_lock_irqsave(&pending_lock, flags);
+    wake = !pending_head;
     if (pending_tail) pending_tail->b_reqnext = bh;
     else pending_head = bh;
     pending_tail = bh;
     spin_unlock_irqrestore(&pending_lock, flags);
-    up(&pending_work);
+    if (wake) wake_up(&pending_work);
     return 0;
 }
 
@@ -231,7 +346,7 @@ static struct block_device_operations block_ops = {
 static int __init psbbn_mmce_init(void)
 {
     int i, rv;
-    if (bridge_bind() || rpc_send(PSBBN_BLOCK_INFO, 0, 0, NULL)) {
+    if (bridge_bind() || rpc_send(PSBBN_BLOCK_INFO, 0, 0, NULL, 0)) {
         printk(KERN_ERR "psbbn-mmce: IOP block service unavailable\n");
         return -ENODEV;
     }
@@ -264,6 +379,7 @@ static int __init psbbn_mmce_init(void)
         return rv;
     }
     add_gendisk(&disk);
+    create_proc_read_entry("psbbn_mmce", 0444, NULL, io_report, NULL);
     printk(KERN_INFO "psbbn-mmce: %u sectors at /dev/hda, %s\n", capacity,
         capabilities & PSBBN_BLOCK_WRITABLE ? "read/write" : "read-only");
     register_disk(&disk, MKDEV(MMCE_MAJOR, 0), MMCE_MINORS, &block_ops, capacity);

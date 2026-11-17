@@ -186,13 +186,16 @@ static void *sound_rpc_server(int funcno, void *data, int size)
 	funcno = funcno;
 	size = size;
 
-	if (param[0] & 0x01) {
+	/* SDRDRV sends legacy modes followed by a high-bit modern notification. */
+	if (size < (int) sizeof(*param) || (param[0] & 0x80000000U))
+		return NULL;
+	if (param[0] == 1) {
 			/* DMA 0 */
 			if(callback1 != NULL) {
 				return (void *) callback1(callback1_arg, 0);
 			}
 	}
-	if (param[0] & 0x02) {
+	if (param[0] == 2) {
 			/* DMA 1 */
 			if(callback2 != NULL) {
 				return (void *) callback2(callback2_arg, 1);
@@ -468,7 +471,7 @@ int sbcall_soundtransstat(tge_sbcall_rpc_arg_t *carg)
 	}
 	rpcBuffer[1] = arg->channel;
 	rpcBuffer[2] = arg->flag;
-	if (SifCallRpc(&sdrsif, SOUND_SCORE_TRANS, SIF_RPC_M_NOWAIT, rpcBuffer, 64, rpcResultBuffer, 16, soundCallback, carg) < 0) {
+	if (SifCallRpc(&sdrsif, SOUND_SCORE_TRANS_STAT, SIF_RPC_M_NOWAIT, rpcBuffer, 64, rpcResultBuffer, 16, soundCallback, carg) < 0) {
 		return -SIF_RPCE_SENDP;
 	}
 	return 0;
@@ -501,6 +504,7 @@ int sbcall_soundtranscallback(tge_sbcall_rpc_arg_t *carg)
 			return -1;
 	}
 	rpcBuffer[1] = arg->channel;
+	rpcBuffer[2] = arg->transfer_cb != NULL;
 	if (SifCallRpc(&sdrsif, SOUND_SCORE_TRANS_CALLBACK, SIF_RPC_M_NOWAIT, rpcBuffer, 64, rpcResultBuffer, 16, soundCallback, carg) < 0) {
 		return -SIF_RPCE_SENDP;
 	}

@@ -23,6 +23,7 @@ DECLARE_EXPORT_TABLE(fhi, 1, 1)
     DECLARE_EXPORT(fhi_read)
     DECLARE_EXPORT(fhi_write)
     DECLARE_EXPORT(fhi_close)
+    DECLARE_EXPORT(fhi_get_io_stats)
 END_EXPORT_TABLE
 #endif
 

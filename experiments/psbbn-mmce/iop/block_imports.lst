@@ -3,6 +3,12 @@ I_sceAtaInit
 I_sceAtaDmaTransfer
 atad_IMPORTS_end
 
+#ifdef PSBBN_BLOCK_FHI_STATS
+fhi_IMPORTS_start
+I_fhi_get_io_stats
+fhi_IMPORTS_end
+#endif
+
 sifcmd_IMPORTS_start
 I_sceSifInitRpc
 I_sceSifSetRpcQueue

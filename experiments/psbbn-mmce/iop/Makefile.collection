@@ -1,0 +1,22 @@
+IOP_BIN = ../build/collection_ata.irx
+IOP_OBJS = collection_ata.o collection_imports.o collection_exports.o
+IOP_OBJS_DIR = ../build/collection_ata/
+IOP_CFLAGS = -I../include -Wextra -Werror
+IOP_LIBS = -lgcc
+.DEFAULT_GOAL := all
+all: $(IOP_BIN)
+include $(PS2SDK)/Defs.make
+include $(PS2SDK)/samples/Makefile.iopglobal
+$(IOP_OBJS_DIR)collection_ata.o: ../include/collection_txn.h ../include/collection_io.h
+$(IOP_OBJS_DIR)collection_imports.c: collection_imports.lst collection_imports.h
+	mkdir -p $(IOP_OBJS_DIR)
+	printf '%s\n' '#include "collection_imports.h"' > $@
+	cat $< >> $@
+$(IOP_OBJS_DIR)collection_imports.o: $(IOP_OBJS_DIR)collection_imports.c
+	$(IOP_C_COMPILE) $(IOP_IETABLE_CFLAGS) -Wno-error=unterminated-string-initialization -c $< -o $@
+$(IOP_OBJS_DIR)collection_exports.c: ../vendor/atad/src/exports.tab
+	mkdir -p $(IOP_OBJS_DIR)
+	printf '%s\n' '#include <irx.h>' '#include <atad.h>' 'extern int _start(int, char **);' 'extern int _exit(void);' 'extern void _retonly(void);' > $@
+	cat $< >> $@
+$(IOP_OBJS_DIR)collection_exports.o: $(IOP_OBJS_DIR)collection_exports.c
+	$(IOP_C_COMPILE) $(IOP_IETABLE_CFLAGS) -Wno-error=unterminated-string-initialization -c $< -o $@

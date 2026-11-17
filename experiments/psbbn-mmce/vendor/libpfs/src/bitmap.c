@@ -52,17 +52,17 @@ void pfsBitmapAllocFree(pfs_cache_t *clink, u32 operation, u32 subpart, u32 chun
 			{
 				if(operation == PFS_BITMAP_ALLOC)
 				{
-					if (*bitmapWord & (1 << bit))
+					if (*bitmapWord & (1U << bit))
 						PFS_PRINTF(PFS_DRV_NAME": Error: Tried to allocate used block!\n");
 
-					*bitmapWord |= (1 << bit);
+					*bitmapWord |= (1U << bit);
 				}
 				else
 				{
-					if ((*bitmapWord & (1 << bit))==0)
+					if ((*bitmapWord & (1U << bit))==0)
 						PFS_PRINTF(PFS_DRV_NAME": Error: Tried to free unused block!\n");
 
-					*bitmapWord &= ~(1 << bit);
+					*bitmapWord &= ~(1U << bit);
 				}
 			}
 		}
