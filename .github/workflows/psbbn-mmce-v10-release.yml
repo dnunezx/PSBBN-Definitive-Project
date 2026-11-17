@@ -43,9 +43,9 @@ jobs:
               with z.open('PSBBN/psbbn.img') as f:
                   h=hashlib.sha256(); size=0
                   while chunk:=f.read(4*1024**2): h.update(chunk); size+=len(chunk)
-              assert size==7516192768 and h.hexdigest()=='cb2af8a11fd390fbff0f874b66a669247e255e243dc89c028f4396e2c74052b0'
+              assert size==7516192768 and h.hexdigest()=='0cedc28cc0a3e442789b0b246253d61c7fd6d9928c50808a9833f39d7b32b31c'
               profile=z.read('PSBBN/real-checks.bin')
-              assert hashlib.sha256(profile).hexdigest()=='f3e49496a07e874fbe2380e99680d78e92cc4d279c16afac8db7b7cfce356953'
+              assert hashlib.sha256(profile).hexdigest()=='a288acd99018a87c134d738846a8fa0bdabde70687bb4d5d25634fd885782759'
               Path('release-input/real-checks.bin').write_bytes(profile)
           data=Path('release-input/psbbn_boot.elf').read_bytes()
           shoff=struct.unpack_from('<I',data,32)[0]; stride,count=struct.unpack_from('<HH',data,46)
@@ -83,7 +83,7 @@ jobs:
                   kind,at,va,pa,fs,ms,flags,align=struct.unpack_from('<8I',data,offset+i*stride)
                   if kind==1: values.append((va,pa,ms,flags,align,data[at:at+fs]))
               return entry,values
-          manifest={'commit':os.environ['GITHUB_SHA'],'image_sha256':'cb2af8a11fd390fbff0f874b66a669247e255e243dc89c028f4396e2c74052b0',
+          manifest={'commit':os.environ['GITHUB_SHA'],'image_sha256':'0cedc28cc0a3e442789b0b246253d61c7fd6d9928c50808a9833f39d7b32b31c',
                     'native_sha256':'dd9fd17c4f161202540d2e7dc630d2816502189cdeb9d97dee1703a3324c4ecf',
                     'loaded_programs_identical':True,'hardware_gameplay_verified_by_ci':False,'launchers':{}}
           # IRX modules contain non-loaded compiler debug sections. Require the
