@@ -52,11 +52,15 @@ for path in paths:
     if not re.fullmatch(r'[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)?', name) or '..' in name:
         raise ValueError('Invalid runtime path: ' + name)
     data = path.read_bytes()
+    # Match the text bytes in the confirmed working receiver on every host.
+    if path.suffix == ".toml" or path.name == "version.txt":
+        data = data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
     if not data or len(data) > 1024 * 1024:
         raise ValueError('Invalid runtime size: ' + name)
     digest.update(name.encode() + b'\0' + len(data).to_bytes(4, 'little') + data)
     files.append((name, data))
 identifier = digest.hexdigest()[:12]
+assert identifier == "ce8fe4873ae6", "Pinned Neutrino runtime changed"
 out = root / 'build/native-runtime'
 out.mkdir(parents=True, exist_ok=True)
 (out / 'runtime.h').write_text('''/* Generated from repository assets. */
