@@ -1,0 +1,35 @@
+name: Third-party adapter loader checks
+
+on:
+  push:
+    branches: [3rd-party-adapters-clean]
+    paths:
+      - scripts/helper/third_party_adapter_loader.py
+      - scripts/licenses/third-party-adapter-loader
+      - tests/test_third_party_adapter_loader.py
+      - docs/third-party-adapter-loader.md
+      - .github/workflows/third-party-adapter-loader.yml
+  pull_request:
+    paths:
+      - scripts/helper/third_party_adapter_loader.py
+      - scripts/licenses/third-party-adapter-loader
+      - tests/test_third_party_adapter_loader.py
+      - docs/third-party-adapter-loader.md
+      - .github/workflows/third-party-adapter-loader.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  loader-tests:
+    name: Host checks (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Run synthetic file and hook instruction checks
+        run: python -m unittest discover -s tests -p test_third_party_adapter_loader.py -v
